@@ -88,5 +88,14 @@ function decodeSelected(how) {
 
 function getArg(name, ptr, type) {
     const { getPointerValue } = globalThis.nethackGlobal.helpers;
-    return type === "o" ? ptr : getPointerValue(name, _module.getValue(ptr, "*"), type);
+    if (type === "o") {
+        return ptr;
+    }
+    // For string values, the pointer already points to the string data —
+    // pass it directly. For other types, dereference first to get the
+    // value stored at the pointer address.
+    if (type === "s") {
+        return getPointerValue(name, ptr, type);
+    }
+    return getPointerValue(name, _module.getValue(ptr, "*"), type);
 }
