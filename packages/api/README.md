@@ -1,19 +1,17 @@
 # @neth4ck/api
 
-JavaScript API for NetHack WASM. Wraps `@neth4ck/neth4ck` and accumulates game state from window-port callbacks into a clean, event-driven API. Works with both NetHack 3.6.7 and 3.7 WASM builds.
+JavaScript API for NetHack WASM. Run a NetHack game, send commands, and read all game state from any JS frontend. Works with both NetHack 3.6.7 and 3.7.
 
 ## Installation
 
 ```bash
-npm install @neth4ck/api @neth4ck/neth4ck
+npm install @neth4ck/api @neth4ck/neth4ck @neth4ck/wasm-367
 ```
 
-You also need a WASM package:
+Or for NetHack 3.7:
 
 ```bash
-npm install @neth4ck/wasm-367   # NetHack 3.6.7
-# or
-npm install @neth4ck/wasm-37    # NetHack 3.7
+npm install @neth4ck/api @neth4ck/neth4ck @neth4ck/wasm-37
 ```
 
 ## Quick Start
@@ -24,18 +22,20 @@ import createModule from "@neth4ck/wasm-367";
 
 const game = new NethackStateManager();
 
-game.on("mapUpdate", () => {
-    console.log("Player at:", game.cursor);
-    console.log("HP:", game.status.hp, "/", game.status.hpMax);
-});
-
-game.on("message", (msg) => {
-    console.log(msg.text);
-});
+game.on("message", (msg) => console.log(msg.text));
 
 game.on("inputRequired", (prompt) => {
-    if (prompt.type === "key") {
-        game.sendKey(".");  // rest
+    switch (prompt.type) {
+        case "key":
+            game.sendKey(".");  // rest one turn
+            break;
+        case "yn":
+            game.answerYn("y");
+            break;
+        case "menu":
+            game.dismissMenu();
+            break;
+        // ... handle other prompt types
     }
 });
 
@@ -44,147 +44,225 @@ await game.start(createModule, {
 });
 ```
 
-## API
+The game loop runs automatically. NetHack suspends whenever it needs player input and emits an `inputRequired` event. Your frontend responds with the appropriate input method, and the game continues.
+
+## Starting a Game
 
 ### `new NethackStateManager(options?)`
 
-- **options.messageHistorySize** — Max messages to retain (default: 200)
-- **options.mapCoordinateOrder** — `"yx"` (default) or `"xy"` for map array indexing
-
-### `game.start(createModule, moduleOptions?) → Promise<this>`
-
-Boots the WASM module and starts the game loop. The game suspends via Asyncify whenever it needs player input, emitting an `inputRequired` event.
-
-- **createModule** — WASM factory (default export from `@neth4ck/wasm-367` or `@neth4ck/wasm-37`)
-- **moduleOptions.nethackOptions** — NetHack options (e.g., `{ name: "Rodney", autoquiver: true }`)
-- Any other properties are passed through as Emscripten Module config
-
-### State Getters
-
-| Getter | Type | Description |
+| Option | Default | Description |
 |---|---|---|
-| `game.map` | `MapTile[][]` | Map grid. Each tile: `{ glyph, bkglyph, tileIndex, ch, color, special, x, y }` |
-| `game.cursor` | `{ x, y }` | Player position on the map |
-| `game.status` | `object` | Status bar fields (see below) |
-| `game.messages` | `RingBuffer` | Message history. Supports `[i]`, `.length`, `.filter()`, `.map()`, etc. |
-| `game.conditions` | `Set<string>` | Active conditions: `"blind"`, `"conf"`, `"hallu"`, etc. |
-| `game.phase` | `string` | `"init"`, `"charSelect"`, `"playing"`, or `"gameOver"` |
-| `game.pendingInput` | `object\|null` | Current input prompt, or null |
-| `game.pendingInputType` | `string\|null` | Shorthand for `pendingInput?.type` |
-| `game.isWaitingForInput` | `boolean` | Whether the game is waiting for player input |
-| `game.activeMenu` | `object\|null` | Current open menu with items, prompt, and selection mode |
-| `game.inventory` | `array` | Current inventory items, read from WASM memory (see below) |
-| `game.inventoryNeedsUpdate` | `boolean` | Whether inventory data is stale |
-| `game.monsters` | `array\|null` | Monster registry (all types in this version). Available after `start()` |
-| `game.visibleMonsters` | `array` | Monsters on the current map frame |
-| `game.module` | `Module` | Raw Emscripten module (escape hatch) |
-| `game.constants` | `object\|null` | Game constants from WASM (colors, glyphs, attributes) |
-| `game.globals` | `object\|null` | Game globals from WASM (window IDs, player name, flags) |
-| `game.helpers` | `object\|null` | Helper functions from WASM (glyph mapping, etc.) |
+| `messageHistorySize` | `200` | Max messages to keep in the ring buffer |
+| `mapCoordinateOrder` | `"yx"` | `"yx"` for `map[y][x]`, `"xy"` for `map[x][y]` |
 
-#### Status Fields
+### `game.start(createModule, moduleOptions?)`
+
+Returns a `Promise` that resolves once the game is running.
 
 ```js
-game.status = {
-    title, str, dx, co, in, wi, ch,   // name/title and attributes
-    align,                              // "Lawful", "Neutral", or "Chaotic"
-    hp, hpMax, energy, energyMax,       // vitals
-    ac, xpLevel, exp, score,            // combat/progression
-    gold, hunger, carrying,             // resources
-    levelDesc, hd, time,                // dungeon/turn info
-}
+await game.start(createModule, {
+    nethackOptions: { name: "Rodney", autoquiver: true, perm_invent: true },
+    print: () => {},     // suppress Emscripten stdout
+    printErr: () => {},  // suppress Emscripten stderr
+});
 ```
 
-#### Monster Registry
+- **createModule** — default export from `@neth4ck/wasm-367` or `@neth4ck/wasm-37`
+- **nethackOptions** — passed as `NETHACKOPTIONS` env var
+- All other properties are forwarded to the Emscripten Module config
+
+## Sending Commands
+
+All input methods respond to the current `inputRequired` prompt. Calling them when no input is pending (or with the wrong type) throws an error.
+
+### Keyboard Input
 
 ```js
+game.sendKey("j");          // send a single key (string or char code)
+game.sendKey(32);           // spacebar
+game.sendDirection("n");    // move north (sends "k")
+game.move("se");            // move southeast (alias for sendDirection)
+game.rest();                // send "." — wait one turn
+game.search();              // send "s" — search adjacent squares
+```
+
+Directions: `"n"`, `"s"`, `"e"`, `"w"`, `"ne"`, `"nw"`, `"se"`, `"sw"`, `"up"`, `"down"`
+
+### Prompts
+
+```js
+game.answerYn("y");               // answer a yes/no question
+game.answerLine("Excalibur");     // answer a text prompt (e.g. "Call this item:")
+```
+
+### Menus
+
+```js
+game.selectMenuItems([ids]);  // select items by identifier
+game.selectMenuItem(id);      // select a single item
+game.dismissMenu();           // close without selecting (ESC)
+```
+
+### Other
+
+```js
+game.sendPosition(x, y);         // send a map coordinate (for position prompts)
+game.sendExtCmd(index);           // send an extended command by index
+game.resolveCharSelect(value);    // respond to character creation
+```
+
+## Reading Game State
+
+All state is available as getters on the game instance. Values update automatically as the game runs.
+
+### Map
+
+```js
+game.map        // MapTile[][] — indexed as map[y][x] (default) or map[x][y]
+game.cursor     // { x, y } — player position on the map
+```
+
+Each tile: `{ glyph, bkglyph, tileIndex, ch, color, special, x, y }`
+
+### Player Status
+
+```js
+game.status.hp          // current hit points
+game.status.hpMax       // max hit points
+game.status.energy      // current power
+game.status.energyMax   // max power
+game.status.ac          // armor class
+game.status.str         // strength (string — may be "18/50")
+game.status.dx          // dexterity
+game.status.co          // constitution
+game.status.in          // intelligence
+game.status.wi          // wisdom
+game.status.ch          // charisma
+game.status.align       // "Lawful", "Neutral", or "Chaotic"
+game.status.xpLevel     // experience level
+game.status.exp         // experience points
+game.status.gold        // gold pieces
+game.status.score       // score
+game.status.hunger      // hunger state string
+game.status.carrying    // encumbrance string
+game.status.levelDesc   // dungeon level (e.g. "Dlvl:1")
+game.status.title       // player name and title
+game.status.time        // turn count
+game.status.hd          // hit dice
+```
+
+### Conditions
+
+```js
+game.conditions   // Set<string> — e.g. Set { "blind", "conf" }
+```
+
+Possible values: `"stone"`, `"slime"`, `"strngl"`, `"foodpois"`, `"termill"`, `"blind"`, `"deaf"`, `"stun"`, `"conf"`, `"hallu"`, `"lev"`, `"fly"`, `"ride"`
+
+### Messages
+
+```js
+game.messages         // ring buffer of recent messages
+game.messages[0]      // oldest message: { text, attr, turn }
+game.messages.length  // number of messages in buffer
+game.messages.at(-1)  // most recent message
+
+// also supports .filter(), .map(), .find(), .some(), .slice(), etc.
+```
+
+### Inventory
+
+Inventory is read directly from WASM memory on every input prompt and emits `inventoryUpdate` when items change. You can also force a refresh with `game.refreshInventory()`.
+
+```js
+game.inventory    // array of items currently carried
+
+game.inventory[0]
+// {
+//   letter: "a",                    — inventory slot
+//   name: "long sword",             — actual object name
+//   appearance: "long sword",       — randomized description (when unidentified)
+//   oclass: 41,                     — object class code
+//   otyp: 5,                        — object type index
+//   quantity: 1,                    — stack count
+//   enchantment: 0,                 — +/- enchantment or charge count
+//   worn: true,                     — equipped in any slot
+//   wornMask: 2,                    — bitmask of equipment slots
+// }
+```
+
+### Monsters
+
+```js
+// Full bestiary — all monster types in this NetHack version
+game.monsters         // array, available after start()
 game.monsters[0]
 // { index, name, symbol, level, speed, ac, mr, alignment, difficulty, color }
 
+// Monsters visible on the current map frame
 game.visibleMonsters
 // [{ x, y, monsterIndex, name, isPet, isRidden, isDetected }, ...]
 ```
 
-#### Inventory
-
-Inventory is read directly from WASM memory on every input prompt. Auto-refreshes and emits `inventoryUpdate` when items change. Also available via `game.refreshInventory()`.
+### Game Phase
 
 ```js
-game.inventory[0]
-// { letter, name, appearance, oclass, otyp, quantity, enchantment, worn, wornMask }
-
-// letter: inventory slot ("a", "b", ...)
-// name: actual object name ("long sword", "potion of healing")
-// appearance: randomized description when unidentified ("clear potion")
-// oclass: object class code (weapon, armor, food, etc.)
-// otyp: object type index into the objects[] array
-// quantity: stack count
-// enchantment: +/- enchantment or charge count
-// worn: true if equipped in any slot
-// wornMask: bitmask of equipment slots
+game.phase              // "init" | "charSelect" | "playing" | "gameOver"
+game.pendingInput       // current input prompt object, or null
+game.pendingInputType   // shorthand for pendingInput?.type
+game.isWaitingForInput  // boolean
+game.activeMenu         // current open menu, or null
 ```
 
-### Input Methods
+### Escape Hatches
 
-Call these in response to `inputRequired` events. Throws if no input is pending or the type doesn't match.
-
-| Method | Input Types | Description |
-|---|---|---|
-| `game.sendKey(key)` | `key`, `poskey` | Send a keypress (string or char code) |
-| `game.sendDirection(dir)` | `key`, `poskey` | Send a direction: `"n"`, `"se"`, `"up"`, `"down"`, etc. |
-| `game.move(dir)` | `key`, `poskey` | Alias for `sendDirection` |
-| `game.rest()` | `key`, `poskey` | Send `.` (rest one turn) |
-| `game.search()` | `key`, `poskey` | Send `s` (search) |
-| `game.answerYn(answer)` | `yn` | Answer a yes/no prompt |
-| `game.answerLine(text)` | `line` | Answer a text prompt |
-| `game.selectMenuItems(ids)` | `menu` | Select menu items by identifier |
-| `game.selectMenuItem(id)` | `menu` | Select a single menu item |
-| `game.dismissMenu()` | `menu` | Close the menu without selecting |
-| `game.sendExtCmd(index)` | `extcmd` | Send an extended command index |
-| `game.sendPosition(x, y, mod?)` | `poskey` | Send a map position |
-| `game.resolveCharSelect(value)` | `charSelect` | Resolve character selection |
-
-### Events
+For advanced use or things the API doesn't cover yet:
 
 ```js
-game.on(event, callback)
-game.once(event, callback)
-game.off(event, callback)
+game.module     // raw Emscripten Module
+game.constants  // globalThis.nethackGlobal.constants (colors, glyphs, etc.)
+game.globals    // globalThis.nethackGlobal.globals (window IDs, flags, etc.)
+game.helpers    // globalThis.nethackGlobal.helpers (glyph mapping, etc.)
 ```
 
-| Event | Callback Args | Description |
+## Events
+
+```js
+game.on(event, callback);
+game.once(event, callback);
+game.off(event, callback);
+```
+
+| Event | Callback Args | When |
 |---|---|---|
+| `inputRequired` | `(prompt)` | Game needs player input. `prompt.type` is `"key"`, `"yn"`, `"line"`, `"menu"`, `"poskey"`, `"extcmd"`, or `"charSelect"` |
 | `mapUpdate` | `(map)` | Map tiles changed |
-| `statusChange` | `(status, changedFields)` | Status bar updated. `changedFields` is an array of changed keys |
+| `statusChange` | `(status, changedFields)` | Status bar updated. `changedFields` lists which keys changed |
 | `message` | `(msg)` | New message. `msg: { text, attr, turn }` |
-| `conditionChange` | `(conditions, added, removed)` | Conditions changed |
-| `inputRequired` | `(prompt)` | Game needs input. `prompt: { type, ... }` |
+| `conditionChange` | `(conditions, added, removed)` | Conditions added or removed |
+| `inventoryUpdate` | `(items)` | Inventory changed |
+| `monstersUpdate` | `(visibleMonsters)` | Visible monsters on the map changed |
 | `menuOpen` | `(menu)` | Menu opened. `menu: { windowId, prompt, selectionMode, items }` |
-| `textWindow` | `(lines)` | Text window displayed |
+| `textWindow` | `(lines)` | Text window displayed (array of strings) |
 | `phaseChange` | `(phase)` | Game phase changed |
-| `inventoryUpdate` | `(items)` | Inventory changed. `items` is the new inventory array |
-| `inventoryNeedsUpdate` | — | Raw signal from the game engine that inventory changed |
-| `monstersUpdate` | `(visibleMonsters)` | Visible monsters changed |
 | `gameOver` | `({ how, when })` | Game ended |
-| `rawCallback` | `(name, args)` | Every WASM callback (escape hatch) |
+| `rawCallback` | `(name, args)` | Every WASM window-port callback (escape hatch for anything not covered above) |
 
-### Exported Constants
+## Exported Constants
 
 ```js
 import {
-    DIRECTIONS,   // { n: "k", s: "j", e: "l", ... }
-    KEY_CODES,    // { ESC: 27, SPACE: 32, ENTER: 13, TAB: 9 }
-    MAP_WIDTH,    // 80
-    MAP_HEIGHT,   // 21
-    COLORS,       // { BLACK: 0, RED: 1, ..., WHITE: 15 }
-    ATTR,         // { NONE: 0, BOLD: 1, DIM: 2, ... }
+    DIRECTIONS,     // { n: "k", s: "j", e: "l", w: "h", ne: "u", ... }
+    KEY_CODES,      // { ESC: 27, SPACE: 32, ENTER: 13, TAB: 9 }
+    MAP_WIDTH,      // 80
+    MAP_HEIGHT,     // 21
+    COLORS,         // { BLACK: 0, RED: 1, ..., WHITE: 15 }
+    ATTR,           // { NONE: 0, BOLD: 1, DIM: 2, ULINE: 4, BLINK: 5, INVERSE: 7 }
     STATUS_FIELDS,  // ["title", "hp", "hpMax", ...]
     CONDITIONS,     // ["stone", "blind", "conf", ...]
-    PHASE,          // { INIT: "init", PLAYING: "playing", ... }
-    INPUT_TYPE,     // { KEY: "key", YN: "yn", MENU: "menu", ... }
+    PHASE,          // { INIT: "init", CHAR_SELECT: "charSelect", PLAYING: "playing", GAME_OVER: "gameOver" }
+    INPUT_TYPE,     // { KEY: "key", YN: "yn", LINE: "line", MENU: "menu", ... }
     MENU_MODE,      // { PICK_NONE, PICK_ONE, PICK_ANY }
-    EventEmitter,
-    NethackStateManager,
 } from "@neth4ck/api";
 ```
 
