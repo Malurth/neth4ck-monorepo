@@ -1,6 +1,7 @@
 const optionMap = new Map([
     ["autoquiver", "boolean"],
     ["name", "string"],
+    ["perm_invent", "boolean"],
 ]);
 
 export function createNethackOptions(opt) {

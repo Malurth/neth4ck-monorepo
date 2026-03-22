@@ -61,6 +61,7 @@ export class NethackStateManager {
             conditions: new Set(),
             pendingInput: null,
             activeMenu: null,
+            inventory: [],
             inventoryNeedsUpdate: false,
             cursor: { x: 0, y: 0 },
             monsters: null,
@@ -88,8 +89,13 @@ export class NethackStateManager {
         this._module._main(0, 0);
 
         // Build monster registry from WASM data (must be after _main, which
-        // runs js_helpers_init to install getMonsterInfo/getNumMons)
+        // runs js_constants_init to export struct pointers and offsets)
         this._buildMonsterRegistry();
+
+        // Refresh inventory on every input prompt — this is when the game is
+        // suspended and WASM memory is stable. Compares against the previous
+        // snapshot and only emits inventoryUpdate if something changed.
+        this.on("inputRequired", () => this._maybeRefreshInventory());
 
         return this;
     }
@@ -154,8 +160,8 @@ export class NethackStateManager {
     /**
      * Full monster registry — array of all monster types in this version.
      * Each entry: { index, name, symbol, level, speed, ac, mr, alignment,
-     *   difficulty, color, ... }
-     * Available after start(). null before start or if WASM lacks monster helpers.
+     *   difficulty, color }
+     * Available after start(). null before start or if WASM lacks exported struct data.
      */
     get monsters() {
         return this._ctx.state.monsters;
@@ -168,6 +174,14 @@ export class NethackStateManager {
      */
     get visibleMonsters() {
         return this._ctx.state.visibleMonsters;
+    }
+
+    /**
+     * Current inventory items, read from WASM memory. Auto-refreshes on input prompts.
+     * Each entry: { letter, name, appearance, oclass, otyp, quantity, enchantment, worn, wornMask }
+     */
+    get inventory() {
+        return this._ctx.state.inventory;
     }
 
     /** Whether inventory data is stale */
@@ -334,6 +348,77 @@ export class NethackStateManager {
         }
         Object.freeze(registry);
         this._ctx.state.monsters = registry;
+    }
+
+    _maybeRefreshInventory() {
+        const prev = this._ctx.state.inventory;
+        this.refreshInventory();
+        const curr = this._ctx.state.inventory;
+        // Quick change detection: different length, or any letter/otyp/quan mismatch
+        if (prev.length !== curr.length
+            || prev.some((p, i) => p.letter !== curr[i].letter
+                || p.otyp !== curr[i].otyp
+                || p.quantity !== curr[i].quantity)) {
+            this._emitter.emit("inventoryUpdate", curr);
+        }
+    }
+
+    /**
+     * Read inventory directly from WASM memory.
+     * Walks the invent linked list and snapshots each item.
+     */
+    refreshInventory() {
+        const ng = globalThis.nethackGlobal;
+        const obj = ng?.constants?.OBJ;
+        const oc = ng?.constants?.OBJCLASS;
+        const od = ng?.constants?.OBJDESCR;
+        // 3.7 exports as "gi.invent", 3.6.7 as "invent"
+        const inventPtr = ng?.pointers?.["gi.invent"] ?? ng?.pointers?.invent;
+        const objectsPtr = ng?.pointers?.objects;
+        const objDescrPtr = ng?.pointers?.obj_descr;
+        if (!obj || !oc || !od || !inventPtr || !objectsPtr || !objDescrPtr) {
+            return;
+        }
+
+        const { getValue, UTF8ToString } = this._module;
+        const items = [];
+
+        // inventPtr is &invent (pointer to a pointer) — dereference to get list head
+        let cur = getValue(inventPtr, "*");
+        while (cur) {
+            const otyp = getValue(cur + obj.OTYP, "i16");
+            const oclass = getValue(cur + obj.OCLASS, "i8");
+            const invlet = String.fromCharCode(getValue(cur + obj.INVLET, "i8"));
+            const quan = getValue(cur + obj.QUAN, "i32");
+            const spe = getValue(cur + obj.SPE, "i8");
+            const owornmask = getValue(cur + obj.OWORNMASK, "i32");
+
+            // Look up name: obj_descr[objects[otyp].oc_name_idx].oc_name
+            const ocBase = objectsPtr + otyp * oc.SIZEOF;
+            const nameIdx = getValue(ocBase + oc.OC_NAME_IDX, "i16");
+            const descrIdx = getValue(ocBase + oc.OC_DESCR_IDX, "i16");
+            const namePtr = getValue(objDescrPtr + nameIdx * od.SIZEOF + od.OC_NAME, "*");
+            const descrPtr = getValue(objDescrPtr + descrIdx * od.SIZEOF + od.OC_DESCR, "*");
+            const name = namePtr ? UTF8ToString(namePtr) : null;
+            const appearance = descrPtr ? UTF8ToString(descrPtr) : null;
+
+            items.push({
+                letter: invlet,
+                name,
+                appearance,
+                oclass,
+                otyp,
+                quantity: quan,
+                enchantment: spe,
+                worn: owornmask !== 0,
+                wornMask: owornmask,
+            });
+
+            cur = getValue(cur + obj.NOBJ, "*");
+        }
+
+        this._ctx.state.inventory = items;
+        this._ctx.state.inventoryNeedsUpdate = false;
     }
 
     _resolveInput(allowedTypes, value) {

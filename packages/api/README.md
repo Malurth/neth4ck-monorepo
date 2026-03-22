@@ -73,9 +73,10 @@ Boots the WASM module and starts the game loop. The game suspends via Asyncify w
 | `game.pendingInputType` | `string\|null` | Shorthand for `pendingInput?.type` |
 | `game.isWaitingForInput` | `boolean` | Whether the game is waiting for player input |
 | `game.activeMenu` | `object\|null` | Current open menu with items, prompt, and selection mode |
+| `game.inventory` | `array` | Current inventory items, read from WASM memory (see below) |
+| `game.inventoryNeedsUpdate` | `boolean` | Whether inventory data is stale |
 | `game.monsters` | `array\|null` | Monster registry (all types in this version). Available after `start()` |
 | `game.visibleMonsters` | `array` | Monsters on the current map frame |
-| `game.inventoryNeedsUpdate` | `boolean` | Whether inventory data is stale |
 | `game.module` | `Module` | Raw Emscripten module (escape hatch) |
 | `game.constants` | `object\|null` | Game constants from WASM (colors, glyphs, attributes) |
 | `game.globals` | `object\|null` | Game globals from WASM (window IDs, player name, flags) |
@@ -102,6 +103,25 @@ game.monsters[0]
 
 game.visibleMonsters
 // [{ x, y, monsterIndex, name, isPet, isRidden, isDetected }, ...]
+```
+
+#### Inventory
+
+Inventory is read directly from WASM memory on every input prompt. Auto-refreshes and emits `inventoryUpdate` when items change. Also available via `game.refreshInventory()`.
+
+```js
+game.inventory[0]
+// { letter, name, appearance, oclass, otyp, quantity, enchantment, worn, wornMask }
+
+// letter: inventory slot ("a", "b", ...)
+// name: actual object name ("long sword", "potion of healing")
+// appearance: randomized description when unidentified ("clear potion")
+// oclass: object class code (weapon, armor, food, etc.)
+// otyp: object type index into the objects[] array
+// quantity: stack count
+// enchantment: +/- enchantment or charge count
+// worn: true if equipped in any slot
+// wornMask: bitmask of equipment slots
 ```
 
 ### Input Methods
@@ -142,7 +162,8 @@ game.off(event, callback)
 | `menuOpen` | `(menu)` | Menu opened. `menu: { windowId, prompt, selectionMode, items }` |
 | `textWindow` | `(lines)` | Text window displayed |
 | `phaseChange` | `(phase)` | Game phase changed |
-| `inventoryNeedsUpdate` | — | Inventory changed (contents not yet readable) |
+| `inventoryUpdate` | `(items)` | Inventory changed. `items` is the new inventory array |
+| `inventoryNeedsUpdate` | — | Raw signal from the game engine that inventory changed |
 | `monstersUpdate` | `(visibleMonsters)` | Visible monsters changed |
 | `gameOver` | `({ how, when })` | Game ended |
 | `rawCallback` | `(name, args)` | Every WASM callback (escape hatch) |
