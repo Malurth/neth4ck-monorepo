@@ -1,0 +1,52 @@
+{
+    "name": "@neth4ck/api",
+    "version": "0.1.0",
+    "description": "JavaScript API for NetHack WASM — lifecycle, input, state tracking, and events for any JS frontend",
+    "type": "module",
+    "main": "src/index.js",
+    "scripts": {
+        "lint": "eslint src/"
+    },
+    "exports": {
+        ".": "./src/index.js"
+    },
+    "files": [
+        "src/",
+        "LICENSE.md",
+        "README.md"
+    ],
+    "keywords": [
+        "nethack",
+        "wasm",
+        "webassembly",
+        "roguelike",
+        "game",
+        "api"
+    ],
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/apowers313/neth4ck-monorepo",
+        "directory": "packages/api"
+    },
+    "author": "Adam Powers <apowers@ato.ms>",
+    "license": "SEE LICENSE IN LICENSE.md",
+    "dependencies": {
+        "@neth4ck/neth4ck": "workspace:*"
+    },
+    "peerDependencies": {
+        "@neth4ck/wasm-367": "workspace:>=2.0.0",
+        "@neth4ck/wasm-37": "workspace:>=2.0.0"
+    },
+    "peerDependenciesMeta": {
+        "@neth4ck/wasm-367": {
+            "optional": true
+        },
+        "@neth4ck/wasm-37": {
+            "optional": true
+        }
+    },
+    "publishConfig": {
+        "access": "public",
+        "provenance": true
+    }
+}

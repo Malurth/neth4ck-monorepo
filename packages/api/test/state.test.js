@@ -1,0 +1,408 @@
+import { execFile } from "node:child_process";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
+
+import { beforeAll, describe, expect, it } from "vitest";
+
+const execFileAsync = promisify(execFile);
+const __dirname = dirname(fileURLToPath(import.meta.url));
+
+// ---------------------------------------------------------------------------
+// Unit tests for exported constants & utilities
+// ---------------------------------------------------------------------------
+
+describe("@neth4ck/api exports", () => {
+    let stateModule;
+
+    beforeAll(async () => {
+        stateModule = await import("@neth4ck/api");
+    });
+
+    it("exports NethackStateManager", () => {
+        expect(typeof stateModule.NethackStateManager).toBe("function");
+    });
+
+    it("exports DIRECTIONS", () => {
+        expect(stateModule.DIRECTIONS).toBeDefined();
+        expect(stateModule.DIRECTIONS.n).toBe("k");
+        expect(stateModule.DIRECTIONS.se).toBe("n");
+    });
+
+    it("exports KEY_CODES", () => {
+        expect(stateModule.KEY_CODES).toBeDefined();
+        expect(stateModule.KEY_CODES.ESC).toBe(27);
+    });
+
+    it("exports MAP_WIDTH and MAP_HEIGHT", () => {
+        expect(stateModule.MAP_WIDTH).toBe(80);
+        expect(stateModule.MAP_HEIGHT).toBe(21);
+    });
+
+    it("exports EventEmitter", () => {
+        expect(typeof stateModule.EventEmitter).toBe("function");
+    });
+
+    it("exports COLORS with standard NetHack color values", () => {
+        expect(stateModule.COLORS.RED).toBe(1);
+        expect(stateModule.COLORS.WHITE).toBe(15);
+    });
+
+    it("exports ATTR with standard NetHack attribute values", () => {
+        expect(stateModule.ATTR.NONE).toBe(0);
+        expect(stateModule.ATTR.BOLD).toBe(1);
+    });
+
+    it("exports STATUS_FIELDS as an array of field names", () => {
+        expect(Array.isArray(stateModule.STATUS_FIELDS)).toBe(true);
+        expect(stateModule.STATUS_FIELDS).toContain("hp");
+        expect(stateModule.STATUS_FIELDS).toContain("title");
+        expect(stateModule.STATUS_FIELDS).toContain("gold");
+    });
+
+    it("exports CONDITIONS as an array of condition names", () => {
+        expect(Array.isArray(stateModule.CONDITIONS)).toBe(true);
+        expect(stateModule.CONDITIONS).toContain("blind");
+        expect(stateModule.CONDITIONS).toContain("conf");
+    });
+
+    it("exports PHASE constants", () => {
+        expect(stateModule.PHASE.INIT).toBe("init");
+        expect(stateModule.PHASE.PLAYING).toBe("playing");
+        expect(stateModule.PHASE.GAME_OVER).toBe("gameOver");
+    });
+
+    it("exports INPUT_TYPE constants", () => {
+        expect(stateModule.INPUT_TYPE.KEY).toBe("key");
+        expect(stateModule.INPUT_TYPE.YN).toBe("yn");
+        expect(stateModule.INPUT_TYPE.MENU).toBe("menu");
+    });
+
+    it("exports MENU_MODE constants", () => {
+        expect(stateModule.MENU_MODE.PICK_NONE).toBe("PICK_NONE");
+        expect(stateModule.MENU_MODE.PICK_ONE).toBe("PICK_ONE");
+        expect(stateModule.MENU_MODE.PICK_ANY).toBe("PICK_ANY");
+    });
+});
+
+// ---------------------------------------------------------------------------
+// Unit tests for EventEmitter
+// ---------------------------------------------------------------------------
+
+describe("EventEmitter", () => {
+    let EventEmitter;
+
+    beforeAll(async () => {
+        const mod = await import("@neth4ck/api");
+        EventEmitter = mod.EventEmitter;
+    });
+
+    it("calls listeners on emit", () => {
+        const emitter = new EventEmitter();
+        const calls = [];
+        emitter.on("test", (val) => calls.push(val));
+        emitter.emit("test", 42);
+        expect(calls).toEqual([42]);
+    });
+
+    it("supports multiple listeners", () => {
+        const emitter = new EventEmitter();
+        const calls = [];
+        emitter.on("test", () => calls.push("a"));
+        emitter.on("test", () => calls.push("b"));
+        emitter.emit("test");
+        expect(calls).toEqual(["a", "b"]);
+    });
+
+    it("removes listeners with off", () => {
+        const emitter = new EventEmitter();
+        const calls = [];
+        const fn = () => calls.push("x");
+        emitter.on("test", fn);
+        emitter.off("test", fn);
+        emitter.emit("test");
+        expect(calls).toEqual([]);
+    });
+
+    it("does not throw on emit with no listeners", () => {
+        const emitter = new EventEmitter();
+        expect(() => emitter.emit("nope")).not.toThrow();
+    });
+
+    it("once() fires listener only once", () => {
+        const emitter = new EventEmitter();
+        const calls = [];
+        emitter.once("test", (val) => calls.push(val));
+        emitter.emit("test", 1);
+        emitter.emit("test", 2);
+        expect(calls).toEqual([1]);
+    });
+
+    it("once() listener can be removed with off before firing", () => {
+        const emitter = new EventEmitter();
+        const calls = [];
+        const fn = (val) => calls.push(val);
+        emitter.once("test", fn);
+        emitter.off("test", fn);
+        emitter.emit("test", 1);
+        expect(calls).toEqual([]);
+    });
+});
+
+// ---------------------------------------------------------------------------
+// Unit tests for NethackStateManager construction & convenience getters
+// ---------------------------------------------------------------------------
+
+describe("NethackStateManager construction", () => {
+    let NethackStateManager;
+
+    beforeAll(async () => {
+        const mod = await import("@neth4ck/api");
+        NethackStateManager = mod.NethackStateManager;
+    });
+
+    it("creates with default options", () => {
+        const game = new NethackStateManager();
+        expect(game.state).toBeDefined();
+        expect(game.phase).toBe("init");
+        expect(game.status.hp).toBe(0);
+        expect(game.conditions).toBeInstanceOf(Set);
+    });
+
+    it("initializes map with correct dimensions (yx mode)", () => {
+        const game = new NethackStateManager({ mapCoordinateOrder: "yx" });
+        expect(game.map.length).toBe(21);
+        expect(game.map[0].length).toBe(80);
+    });
+
+    it("initializes map with correct dimensions (xy mode)", () => {
+        const game = new NethackStateManager({ mapCoordinateOrder: "xy" });
+        expect(game.map.length).toBe(80);
+        expect(game.map[0].length).toBe(21);
+    });
+
+    it("throws on sendKey with no pending input", () => {
+        const game = new NethackStateManager();
+        expect(() => game.sendKey("j")).toThrow("no pending input");
+    });
+
+    it("throws on answerYn with no pending input", () => {
+        const game = new NethackStateManager();
+        expect(() => game.answerYn("y")).toThrow("no pending input");
+    });
+
+    it("convenience getters return initial values", () => {
+        const game = new NethackStateManager();
+        expect(game.isWaitingForInput).toBe(false);
+        expect(game.pendingInputType).toBeNull();
+        expect(game.pendingInput).toBeNull();
+        expect(game.activeMenu).toBeNull();
+        expect(game.inventoryNeedsUpdate).toBe(false);
+    });
+
+    it("messages ring buffer supports bracket indexing", () => {
+        const game = new NethackStateManager();
+        // Simulate pushing a message via internal state
+        game.state.messages.push({ text: "hello", attr: 0, turn: 0 });
+        game.state.messages.push({ text: "world", attr: 0, turn: 0 });
+        expect(game.messages[0].text).toBe("hello");
+        expect(game.messages[1].text).toBe("world");
+        expect(game.messages.length).toBe(2);
+    });
+
+    it("messages ring buffer supports array methods", () => {
+        const game = new NethackStateManager();
+        game.state.messages.push({ text: "a", attr: 0, turn: 0 });
+        game.state.messages.push({ text: "b", attr: 1, turn: 0 });
+        game.state.messages.push({ text: "c", attr: 0, turn: 1 });
+
+        expect(game.messages.filter((m) => m.attr === 0).length).toBe(2);
+        expect(game.messages.map((m) => m.text)).toEqual(["a", "b", "c"]);
+        expect(game.messages.find((m) => m.text === "b").attr).toBe(1);
+        expect(game.messages.some((m) => m.text === "c")).toBe(true);
+        expect(game.messages.slice(1).length).toBe(2);
+    });
+
+    it("messages ring buffer evicts oldest when full", () => {
+        const game = new NethackStateManager({ messageHistorySize: 3 });
+        for (let i = 0; i < 5; i++) {
+            game.state.messages.push({ text: `msg${i}`, attr: 0, turn: 0 });
+        }
+        expect(game.messages.length).toBe(3);
+        expect(game.messages[0].text).toBe("msg2");
+        expect(game.messages[2].text).toBe("msg4");
+    });
+
+    it("messages ring buffer supports iteration", () => {
+        const game = new NethackStateManager();
+        game.state.messages.push({ text: "x", attr: 0, turn: 0 });
+        const texts = [];
+        for (const msg of game.messages) {
+            texts.push(msg.text);
+        }
+        expect(texts).toEqual(["x"]);
+    });
+
+    it("constants/globals/helpers are null before start()", () => {
+        const game = new NethackStateManager();
+        // Before start, globalThis.nethackGlobal may not exist
+        expect(game.module).toBeNull();
+    });
+
+    it("supports once() on events", () => {
+        const game = new NethackStateManager();
+        const calls = [];
+        game.once("rawCallback", () => calls.push("fired"));
+        game._emitter.emit("rawCallback", "test", []);
+        game._emitter.emit("rawCallback", "test", []);
+        expect(calls).toEqual(["fired"]);
+    });
+});
+
+// ---------------------------------------------------------------------------
+// Helper: run the subprocess and parse JSON results
+// ---------------------------------------------------------------------------
+function runStateGame(version) {
+    return execFileAsync("node", [join(__dirname, "run-state-shim.mjs"), version], {
+        timeout: 20000,
+    }).then(({ stdout }) => JSON.parse(stdout.trim()));
+}
+
+// ---------------------------------------------------------------------------
+// Integration tests per WASM version
+// ---------------------------------------------------------------------------
+describe.each([
+    { label: "wasm-367", version: "367" },
+    { label: "wasm-37", version: "37" },
+])("integration with $label", ({ version }) => {
+    let result;
+
+    beforeAll(async () => {
+        result = await runStateGame(version);
+    }, 25000);
+
+    it("completes without errors", () => {
+        expect(result.error).toBeNull();
+    });
+
+    // ── Events fired ─────────────────────────
+
+    describe("events", () => {
+        it("fires rawCallback events", () => {
+            expect(result.events.rawCallback).toBeGreaterThan(0);
+        });
+
+        it("fires mapUpdate events", () => {
+            expect(result.events.mapUpdate).toBeGreaterThan(0);
+        });
+
+        it("fires message events", () => {
+            expect(result.events.message).toBeGreaterThan(0);
+        });
+
+        it("fires statusChange events", () => {
+            expect(result.events.statusChange).toBeGreaterThan(0);
+        });
+
+        it("fires inputRequired events", () => {
+            expect(result.events.inputRequired).toBe(50);
+        });
+
+        it("fires phaseChange events", () => {
+            expect(result.events.phaseChange).toBeGreaterThan(0);
+        });
+    });
+
+    // ── State accumulation ───────────────────
+
+    describe("state accumulation", () => {
+        it("captures messages with text content", () => {
+            expect(result.firstMessages.length).toBeGreaterThan(0);
+            const hasText = result.firstMessages.some((m) => m.text.length > 0);
+            expect(hasText).toBe(true);
+        });
+
+        it("accumulates message count", () => {
+            expect(result.messageCount).toBeGreaterThan(0);
+        });
+
+        it("records status field changes", () => {
+            expect(result.statusFields.length).toBeGreaterThan(0);
+            const allFields = result.statusFields.flat();
+            expect(allFields.length).toBeGreaterThan(0);
+        });
+
+        it("captures a non-empty map tile", () => {
+            expect(result.mapTileSample).not.toBeNull();
+            expect(result.mapTileSample.glyph).toBeGreaterThan(0);
+            expect(typeof result.mapTileSample.x).toBe("number");
+            expect(typeof result.mapTileSample.y).toBe("number");
+        });
+
+        it("populates final status fields", () => {
+            expect(result.finalStatus).not.toBeNull();
+            expect(typeof result.finalStatus.hp).toBe("number");
+            expect(typeof result.finalStatus.title).toBe("string");
+        });
+
+        it("has realistic HP values (not zero)", () => {
+            expect(result.finalStatus.hp).toBeGreaterThan(0);
+            expect(result.finalStatus.hpMax).toBeGreaterThan(0);
+            expect(result.finalStatus.hp).toBeLessThanOrEqual(result.finalStatus.hpMax);
+        });
+
+        it("has a player title with the player name", () => {
+            expect(result.finalStatus.title).toContain("StateTest");
+            // Should be trimmed — no trailing whitespace
+            expect(result.finalStatus.title).toBe(result.finalStatus.title.trim());
+        });
+
+        it("has a dungeon level description", () => {
+            expect(result.finalStatus.levelDesc).toMatch(/Dlvl:\d/);
+        });
+
+        it("has stat values in plausible ranges", () => {
+            // NetHack starting stats are typically 3-25
+            expect(result.finalStatus.dx).toBeGreaterThan(0);
+            expect(result.finalStatus.co).toBeGreaterThan(0);
+            expect(result.finalStatus.wi).toBeGreaterThan(0);
+            expect(result.finalStatus.ch).toBeGreaterThan(0);
+        });
+
+        it("has a valid alignment string", () => {
+            expect(["Lawful", "Neutral", "Chaotic"]).toContain(result.finalStatus.align);
+        });
+    });
+
+    // ── Input handling ───────────────────────
+
+    describe("input handling", () => {
+        it("records input prompt types", () => {
+            expect(result.inputTypes.length).toBeGreaterThan(0);
+        });
+
+        it("handles charSelect input type", () => {
+            expect(result.inputTypes).toContain("charSelect");
+        });
+
+        it("handles key input type", () => {
+            expect(result.inputTypes).toContain("key");
+        });
+    });
+
+    // ── Phase tracking ───────────────────────
+
+    describe("phase tracking", () => {
+        it("transitions through init phase", () => {
+            expect(result.phaseChanges).toContain("init");
+        });
+
+        it("transitions through charSelect phase", () => {
+            expect(result.phaseChanges).toContain("charSelect");
+        });
+
+        it("reaches playing phase", () => {
+            expect(result.phaseChanges).toContain("playing");
+        });
+    });
+});
