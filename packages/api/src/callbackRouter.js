@@ -7,6 +7,46 @@ import {
 } from "./constants.js";
 
 /**
+ * Classify a glyph into a tile type string. Uses the GLYPH_*_OFF constants
+ * to determine which category the glyph belongs to. Works for any offset
+ * ordering (3.6.7 and 3.7 differ).
+ */
+let _sortedGlyphRanges = null;
+function classifyGlyph(glyph, gc) {
+    if (!gc || glyph === gc.NO_GLYPH) return "nothing";
+    // Build sorted ranges on first call (they don't change per game)
+    if (!_sortedGlyphRanges) {
+        const ranges = [
+            [gc.GLYPH_MON_OFF, "monster"],
+            [gc.GLYPH_PET_OFF, "pet"],
+            [gc.GLYPH_INVIS_OFF, "invisible"],
+            [gc.GLYPH_DETECT_OFF, "detected"],
+            [gc.GLYPH_BODY_OFF, "corpse"],
+            [gc.GLYPH_RIDDEN_OFF, "ridden"],
+            [gc.GLYPH_OBJ_OFF, "object"],
+            [gc.GLYPH_CMAP_OFF, "feature"],
+            [gc.GLYPH_EXPLODE_OFF, "effect"],
+            [gc.GLYPH_ZAP_OFF, "effect"],
+            [gc.GLYPH_SWALLOW_OFF, "effect"],
+            [gc.GLYPH_WARNING_OFF, "warning"],
+            [gc.GLYPH_STATUE_OFF, "statue"],
+        ];
+        if (gc.GLYPH_UNEXPLORED_OFF !== undefined) {
+            ranges.push([gc.GLYPH_UNEXPLORED_OFF, "unexplored"]);
+        }
+        if (gc.GLYPH_NOTHING_OFF !== undefined) {
+            ranges.push([gc.GLYPH_NOTHING_OFF, "nothing"]);
+        }
+        // Sort descending — first match (glyph >= offset) wins
+        _sortedGlyphRanges = ranges.sort((a, b) => b[0] - a[0]);
+    }
+    for (const [offset, type] of _sortedGlyphRanges) {
+        if (glyph >= offset) return type;
+    }
+    return null;
+}
+
+/**
  * Given a glyph and the GLYPH offset constants, determine if it represents
  * a monster and return the monster index + category. Returns null if not a monster.
  */
@@ -29,20 +69,29 @@ function classifyMonsterGlyph(glyph, glyphConstants) {
         return null;
     }
 
-    if (glyph >= GLYPH_MON_OFF && glyph < GLYPH_MON_OFF + NUMMONS) {
-        return { monsterIndex: glyph - GLYPH_MON_OFF, isPet: false, isRidden: false, isDetected: false, isStatue: false };
+    // In 3.7, each monster category spans 2*NUMMONS (male + female).
+    // Use the gap between offsets to determine the actual range size.
+    // In 3.6.7 the gap equals NUMMONS; in 3.7 it's 2*NUMMONS.
+    const monSpan = GLYPH_PET_OFF - GLYPH_MON_OFF;
+
+    function monIndex(g, off) {
+        return (g - off) % NUMMONS;
     }
-    if (glyph >= GLYPH_PET_OFF && glyph < GLYPH_PET_OFF + NUMMONS) {
-        return { monsterIndex: glyph - GLYPH_PET_OFF, isPet: true, isRidden: false, isDetected: false, isStatue: false };
+
+    if (glyph >= GLYPH_MON_OFF && glyph < GLYPH_MON_OFF + monSpan) {
+        return { monsterIndex: monIndex(glyph, GLYPH_MON_OFF), isPet: false, isRidden: false, isDetected: false, isStatue: false };
     }
-    if (glyph >= GLYPH_DETECT_OFF && glyph < GLYPH_DETECT_OFF + NUMMONS) {
-        return { monsterIndex: glyph - GLYPH_DETECT_OFF, isPet: false, isRidden: false, isDetected: true, isStatue: false };
+    if (glyph >= GLYPH_PET_OFF && glyph < GLYPH_PET_OFF + monSpan) {
+        return { monsterIndex: monIndex(glyph, GLYPH_PET_OFF), isPet: true, isRidden: false, isDetected: false, isStatue: false };
     }
-    if (glyph >= GLYPH_RIDDEN_OFF && glyph < GLYPH_RIDDEN_OFF + NUMMONS) {
-        return { monsterIndex: glyph - GLYPH_RIDDEN_OFF, isPet: false, isRidden: true, isDetected: false, isStatue: false };
+    if (glyph >= GLYPH_DETECT_OFF && glyph < GLYPH_DETECT_OFF + monSpan) {
+        return { monsterIndex: monIndex(glyph, GLYPH_DETECT_OFF), isPet: false, isRidden: false, isDetected: true, isStatue: false };
+    }
+    if (glyph >= GLYPH_RIDDEN_OFF && glyph < GLYPH_RIDDEN_OFF + monSpan) {
+        return { monsterIndex: monIndex(glyph, GLYPH_RIDDEN_OFF), isPet: false, isRidden: true, isDetected: false, isStatue: false };
     }
     if (glyph >= GLYPH_STATUE_OFF && glyph < MAX_GLYPH) {
-        return { monsterIndex: glyph - GLYPH_STATUE_OFF, isPet: false, isRidden: false, isDetected: false, isStatue: true };
+        return { monsterIndex: monIndex(glyph, GLYPH_STATUE_OFF), isPet: false, isRidden: false, isDetected: false, isStatue: true };
     }
 
     return null;
@@ -56,7 +105,12 @@ export function createCallbackRouter(ctx) {
     let mapDirty = false;
     let prevConditions = new Set();
     let turnCounter = 0;
-    let pendingVisibleMonsters = [];
+    // Persistent map of visible monsters by position. Updated incrementally
+    // on each print_glyph — entries are added/updated for monster glyphs,
+    // removed when a position is overwritten with a non-monster glyph.
+    // This avoids losing monsters that didn't move (NetHack only redraws
+    // tiles that changed).
+    const monstersByPosition = new Map();
 
     function setTile(x, y, tile) {
         if (options.mapCoordinateOrder === "xy") {
@@ -136,16 +190,16 @@ export function createCallbackRouter(ctx) {
         const p = new Promise((resolve) => {
             ctx.pendingResolve = resolve;
         });
-        // During startup, the internal handler gets exclusive access to
-        // input prompts (charSelect, askname, text window dismissal, etc.)
-        // so that external listeners registered before start() don't
-        // accidentally try to resolve them.
-        // IMPORTANT: defer the handler call so that `p` is returned to
-        // the WASM callback first.  Asyncify must unwind before the
-        // promise is resolved, otherwise doRewind re-enters _main and
-        // corrupts the asyncify state.
-        if (ctx.startupInputHandler) {
-            setTimeout(() => ctx.startupInputHandler?.(prompt), 0);
+        if (ctx.inputInterceptor) {
+            // An interceptor has exclusive first-look at prompts.
+            // Deferred via setTimeout so Asyncify unwinds before
+            // the promise is resolved (avoids doRewind reentrancy).
+            setTimeout(() => {
+                const handled = ctx.inputInterceptor?.(prompt);
+                if (!handled) {
+                    emitter.emit("inputRequired", prompt);
+                }
+            }, 0);
         } else {
             emitter.emit("inputRequired", prompt);
         }
@@ -187,15 +241,32 @@ export function createCallbackRouter(ctx) {
                         tileIndex = mod.getValue(glyphArg + 30, "i16");
                     }
                 }
-                setTile(x, y, { glyph, bkglyph, tileIndex, ch, color, special, x, y });
-
-                // Track visible monsters
+                // Classify the glyph and derive a label for statues/corpses
                 const glyphConstants = globalThis.nethackGlobal?.constants?.GLYPH;
+                const tileType = classifyGlyph(glyph, glyphConstants);
+                let tileLabel = null;
+                if ((tileType === "statue" || tileType === "corpse") && glyphConstants) {
+                    const offKey = tileType === "statue" ? "GLYPH_STATUE_OFF" : "GLYPH_BODY_OFF";
+                    const monIdx = (glyph - glyphConstants[offKey]) % glyphConstants.NUMMONS;
+                    const monster = state.monsters?.[monIdx];
+                    if (monster) {
+                        tileLabel = tileType === "statue"
+                            ? `statue of ${monster.name}`
+                            : `${monster.name} corpse`;
+                    }
+                }
+
+                setTile(x, y, { glyph, bkglyph, tileIndex, ch, color, special, x, y, tileType, tileLabel });
+
+                // Track visible monsters — update persistent map by position.
+                // When a tile is redrawn with a monster glyph, add/update.
+                // When redrawn with a non-monster glyph, remove.
+                const posKey = `${x},${y}`;
                 const monInfo = classifyMonsterGlyph(glyph, glyphConstants);
                 if (monInfo && !monInfo.isStatue) {
                     const registry = state.monsters;
                     const monster = registry?.[monInfo.monsterIndex];
-                    pendingVisibleMonsters.push({
+                    monstersByPosition.set(posKey, {
                         x,
                         y,
                         monsterIndex: monInfo.monsterIndex,
@@ -204,6 +275,8 @@ export function createCallbackRouter(ctx) {
                         isRidden: monInfo.isRidden,
                         isDetected: monInfo.isDetected,
                     });
+                } else {
+                    monstersByPosition.delete(posKey);
                 }
 
                 mapDirty = true;
@@ -215,8 +288,7 @@ export function createCallbackRouter(ctx) {
                 if (winName === "WIN_MAP" && mapDirty) {
                     mapDirty = false;
                     turnCounter++;
-                    state.visibleMonsters = pendingVisibleMonsters;
-                    pendingVisibleMonsters = [];
+                    state.visibleMonsters = Array.from(monstersByPosition.values());
                     emitter.emit("mapUpdate", state.map);
                     if (state.visibleMonsters.length > 0) {
                         emitter.emit("monstersUpdate", state.visibleMonsters);
@@ -238,7 +310,7 @@ export function createCallbackRouter(ctx) {
             case "shim_clear_nhwindow":
                 if (args[0] === "WIN_MAP") {
                     clearMap();
-                    pendingVisibleMonsters = [];
+                    monstersByPosition.clear();
                 }
                 return 0;
 
@@ -296,7 +368,18 @@ export function createCallbackRouter(ctx) {
                 return 0;
 
             case "shim_add_menu": {
-                const [winId, glyph, identifier, ch, gch, attr, str, preselected] = args;
+                // 3.7 format: "vipi00iisi" → winId, glyphinfo, identifier, ch, gch, attr, clr, str, itemflags
+                // 3.6.7 format: "viniicis" → winId, glyph, identifier, accelerator, groupacc, attr, str
+                // Detect by checking if we have 9 args (3.7) or fewer (3.6.7)
+                const [winId] = args;
+                let glyph, identifier, ch, gch, attr, str, preselected;
+                if (args.length >= 9) {
+                    // 3.7: extra clr field between attr and str
+                    [, glyph, identifier, ch, gch, attr, , str, preselected] = args;
+                } else {
+                    // 3.6.7
+                    [, glyph, identifier, ch, gch, attr, str, preselected] = args;
+                }
                 const builder = menuBuilders.get(winId);
                 if (builder) {
                     builder.items.push({
@@ -329,8 +412,18 @@ export function createCallbackRouter(ctx) {
                     selectionMode: how,
                     items: builder?.items ?? [],
                 };
-                state.activeMenu = menu;
                 menuBuilders.delete(winId);
+
+                // Auto-resolve display-only menus if configured.
+                // Emit items as a textWindow so consumers see the content
+                // without blocking gameplay.
+                if ((how === 0 || how === "PICK_NONE") && options?.autoResolvePickNone) {
+                    const lines = menu.items.map(i => i.text).filter(Boolean);
+                    if (lines.length > 0) emitter.emit("textWindow", lines);
+                    return 0;
+                }
+
+                state.activeMenu = menu;
                 emitter.emit("menuOpen", menu);
                 // WASM expects an integer return (count of selected items,
                 // or -1 for cancel). Transform the resolved value.
@@ -346,8 +439,25 @@ export function createCallbackRouter(ctx) {
             case "shim_nhgetch":
                 return setInput({ type: "key" });
 
-            case "shim_nh_poskey":
-                return setInput({ type: "poskey" });
+            case "shim_nh_poskey": {
+                // poskey receives output pointers: [x_ptr, y_ptr, mod_ptr]
+                // When resolved with a number → key press (return the key code).
+                // When resolved with { x, y, mod } → position click
+                //   (write to the pointers and return 0).
+                const [xPtr, yPtr, modPtr] = args;
+                return setInput({ type: "poskey" }).then((value) => {
+                    if (typeof value === "object" && value !== null) {
+                        const mod = ctx.module;
+                        if (mod?.setValue && xPtr && yPtr && modPtr) {
+                            mod.setValue(xPtr, value.x ?? 0, "i32");
+                            mod.setValue(yPtr, value.y ?? 0, "i32");
+                            mod.setValue(modPtr, value.mod ?? 0, "i32");
+                        }
+                        return 0; // no key — position was sent
+                    }
+                    return value; // key code
+                });
+            }
 
             case "shim_yn_function": {
                 const [query, resp, def] = args;

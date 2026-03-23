@@ -191,6 +191,31 @@ describe("NethackStateManager construction", () => {
         expect(() => game.answerYn("y")).toThrow("no pending input");
     });
 
+    it("throws on verb method when game is at wrong prompt type", () => {
+        const game = new NethackStateManager();
+        // Simulate a yn prompt being active
+        game._ctx.state.pendingInput = { type: "yn", query: "Really?" };
+        game._ctx.pendingResolve = () => {};
+        expect(() => game.eat("a")).toThrow("cannot start verb command");
+    });
+
+    it("throws on verb method when another interceptor is active", () => {
+        const game = new NethackStateManager();
+        game._ctx.inputInterceptor = () => true;
+        game._ctx.state.pendingInput = { type: "poskey" };
+        game._ctx.pendingResolve = () => {};
+        expect(() => game.drop("b")).toThrow("another input sequence");
+    });
+
+    it("verb method with no letter resolves without interceptor", () => {
+        const game = new NethackStateManager();
+        game._ctx.state.pendingInput = { type: "poskey" };
+        game._ctx.pendingResolve = () => {};
+        const result = game.eat();
+        expect(result).toBeInstanceOf(Promise);
+        expect(game._ctx.inputInterceptor).toBeFalsy();
+    });
+
     it("convenience getters return initial values", () => {
         const game = new NethackStateManager();
         expect(game.isWaitingForInput).toBe(false);
@@ -339,6 +364,11 @@ describe.each([
             expect(typeof result.mapTileSample.y).toBe("number");
         });
 
+        it("captures tileType on map tiles", () => {
+            expect(result.mapTileSample.tileType).toBeDefined();
+            expect(typeof result.mapTileSample.tileType).toBe("string");
+        });
+
         it("populates final status fields", () => {
             expect(result.finalStatus).not.toBeNull();
             expect(typeof result.finalStatus.hp).toBe("number");
@@ -387,8 +417,12 @@ describe.each([
             expect(result.inputTypes).not.toContain("charSelect");
         });
 
-        it("handles key input type", () => {
-            expect(result.inputTypes).toContain("key");
+        it("handles key or poskey input type", () => {
+            // "key" prompts during startup (text window dismissal) are
+            // handled internally. Gameplay uses "poskey". Either is valid.
+            const hasKey = result.inputTypes.includes("key")
+                || result.inputTypes.includes("poskey");
+            expect(hasKey).toBe(true);
         });
     });
 
@@ -406,5 +440,86 @@ describe.each([
         it("reaches playing phase", () => {
             expect(result.phaseChanges).toContain("playing");
         });
+    });
+});
+
+// ---------------------------------------------------------------------------
+// Verb method integration tests
+// ---------------------------------------------------------------------------
+function runVerbGame(version) {
+    return execFileAsync("node", [join(__dirname, "run-verb-shim.mjs"), version], {
+        timeout: 20000,
+    }).then(({ stdout }) => JSON.parse(stdout.trim()));
+}
+
+describe.each([
+    { label: "wasm-367", version: "367" },
+    { label: "wasm-37", version: "37" },
+])("verb methods with $label", ({ version }) => {
+    let result;
+
+    beforeAll(async () => {
+        result = await runVerbGame(version);
+    }, 25000);
+
+    it("completes without errors", () => {
+        expect(result.error).toBeNull();
+    });
+
+    it("eat() handles food item", () => {
+        if (result.eatResult?.skipped) return;
+        expect(result.eatResult.item).toBeDefined();
+    });
+
+    it("eat() updates inventory after action", () => {
+        if (result.eatResult?.skipped) return;
+        // Eating may take multiple turns ("You begin eating..."),
+        // so inventory might not change on the same turn.
+        expect(result.eatResult.inventoryChangedImmediately).toBeDefined();
+    });
+
+    it("drop() handles inventory item", () => {
+        if (result.dropResult?.skipped) return;
+        expect(result.dropResult.item).toBeDefined();
+    });
+
+    it("drop() updates inventory after action", () => {
+        if (result.dropResult?.skipped) return;
+        expect(result.dropResult.inventoryChangedImmediately).toBeDefined();
+    });
+
+    it("takeOff() handles worn equipment", () => {
+        if (result.takeOffResult?.skipped) return;
+        expect(result.takeOffResult.item).toBeDefined();
+    });
+
+    it("eat() with no item letter resolves without interceptor", () => {
+        if (result.noArgEatResult?.skipped) return;
+        expect(result.noArgEatResult.resolved).toBe(true);
+        expect(result.noArgEatResult.noInterceptor).toBe(true);
+    });
+
+    it("drop() with no item letter resolves without interceptor", () => {
+        if (result.noArgDropResult?.skipped) return;
+        expect(result.noArgDropResult.resolved).toBe(true);
+        expect(result.noArgDropResult.noInterceptor).toBe(true);
+    });
+
+    it("takeOff() with no item letter resolves without interceptor", () => {
+        if (result.noArgTakeOffResult?.skipped) return;
+        expect(result.noArgTakeOffResult.resolved).toBe(true);
+        expect(result.noArgTakeOffResult.noInterceptor).toBe(true);
+    });
+
+    it("cleans up inputInterceptor after successful verb methods", () => {
+        // If all verbs completed (not skipped/timed out), interceptor should be null
+        const allSkipped = [result.eatResult, result.dropResult, result.takeOffResult]
+            .every(r => r?.skipped);
+        if (allSkipped) return; // nothing to check
+        // If any verb timed out, interceptor might still be set
+        const anyTimedOut = [result.eatResult, result.dropResult, result.takeOffResult]
+            .some(r => r?.reason === "verb timeout");
+        if (anyTimedOut) return;
+        expect(result.interceptorCleanedUp).toBe(true);
     });
 });

@@ -162,7 +162,11 @@ game.map        // MapTile[][] — indexed as map[y][x] (default) or map[x][y]
 game.cursor     // { x, y } — player position on the map
 ```
 
-Each tile: `{ glyph, bkglyph, tileIndex, ch, color, special, x, y }`
+Each tile: `{ glyph, bkglyph, tileIndex, ch, color, special, x, y, tileType, tileLabel }`
+
+`tileType` classifies the glyph: `"monster"`, `"pet"`, `"ridden"`, `"detected"`, `"object"`, `"corpse"`, `"statue"`, `"feature"`, `"effect"`, `"warning"`, `"invisible"`, `"unexplored"`, `"nothing"`, or `null`.
+
+`tileLabel` provides a descriptive name for statues and corpses (e.g., `"statue of goblin"`, `"goblin corpse"`). `null` for other tile types.
 
 ### Player Status
 

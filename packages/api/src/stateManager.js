@@ -8,6 +8,7 @@ import { createRingBuffer } from "./ringBuffer.js";
 const DEFAULT_OPTIONS = {
     messageHistorySize: 200,
     mapCoordinateOrder: "yx",
+    autoResolvePickNone: false,
 };
 
 export class NethackStateManager {
@@ -357,6 +358,87 @@ export class NethackStateManager {
         this._resolveInput(["poskey"], { x, y, mod });
     }
 
+    // ── Inventory Actions ─────────────────────
+    // High-level methods that send a verb key, wait for the game to
+    // prompt for an item, then send the item letter automatically.
+
+    /**
+     * Send a command key and then automatically answer the item prompt.
+     * Waits for a key/poskey prompt (the "What do you want to [verb]?"
+     * item selection) and sends the item letter. Other prompt types
+     * (yn questions, menus) that fire in between are forwarded to
+     * external listeners.
+     */
+    _sendVerbThenItem(verbKey, itemLetter) {
+        if (this._ctx.inputInterceptor) {
+            throw new Error("another input sequence is already in progress");
+        }
+        const inputType = this.pendingInputType;
+        if (inputType && inputType !== "key" && inputType !== "poskey") {
+            throw new Error(
+                `cannot start verb command: game is waiting for '${inputType}' input, not gameplay`
+            );
+        }
+        // No item specified — just send the verb key and let the
+        // consumer handle all subsequent prompts.
+        if (!itemLetter) {
+            this.sendKey(verbKey);
+            return Promise.resolve();
+        }
+        this.sendKey(verbKey);
+        return new Promise((resolve) => {
+            const done = () => {
+                this._ctx.inputInterceptor = null;
+                this._emitter.off("mapUpdate", mapHandler);
+                resolve();
+            };
+
+            this._ctx.inputInterceptor = (prompt) => {
+                if (prompt.type === "key" || prompt.type === "poskey") {
+                    // Item selection prompt (nhgetch) — send the letter.
+                    done();
+                    this.sendKey(itemLetter);
+                    return true;
+                }
+                if (prompt.type === "yn") {
+                    // NetHack uses yn_function for item selection when few
+                    // items match (e.g. "What do you want to eat? [gh or ?*]").
+                    // Check both resp choices and the bracketed query text.
+                    const choices = prompt.choices || "";
+                    const queryMatch = (prompt.query || "").match(/\[([^\]]+)\]/);
+                    const allChoices = choices + (queryMatch ? queryMatch[1] : "");
+                    if (allChoices.includes(itemLetter)) {
+                        done();
+                        this.answerYn(itemLetter);
+                        return true;
+                    }
+                }
+                // Any other prompt — forward to the consumer.
+                return false;
+            };
+
+            // If the game auto-completed (only one valid item),
+            // mapUpdate fires with no item prompt. Clean up.
+            const mapHandler = () => {
+                this._emitter.off("mapUpdate", mapHandler);
+                if (this._ctx.inputInterceptor) done();
+            };
+            this._emitter.on("mapUpdate", mapHandler);
+        });
+    }
+
+    apply(itemLetter) { return this._sendVerbThenItem("a", itemLetter); }
+    drink(itemLetter) { return this._sendVerbThenItem("q", itemLetter); }
+    eat(itemLetter) { return this._sendVerbThenItem("e", itemLetter); }
+    read(itemLetter) { return this._sendVerbThenItem("r", itemLetter); }
+    wear(itemLetter) { return this._sendVerbThenItem("W", itemLetter); }
+    wield(itemLetter) { return this._sendVerbThenItem("w", itemLetter); }
+    takeOff(itemLetter) { return this._sendVerbThenItem("T", itemLetter); }
+    putOn(itemLetter) { return this._sendVerbThenItem("P", itemLetter); }
+    drop(itemLetter) { return this._sendVerbThenItem("d", itemLetter); }
+    throw(itemLetter) { return this._sendVerbThenItem("t", itemLetter); }
+    zap(itemLetter) { return this._sendVerbThenItem("z", itemLetter); }
+
     // ── Internal ─────────────────────────────
 
     /**
@@ -388,37 +470,33 @@ export class NethackStateManager {
 
         return new Promise((resolve) => {
             const cleanup = () => {
-                this._ctx.startupInputHandler = null;
+                this._ctx.inputInterceptor = null;
                 this.off("textWindow", textHandler);
                 this.off("message", messageHandler);
                 this.off("mapUpdate", mapHandler);
                 this._ctx.state.phase = "playing";
                 this._emitter.emit("phaseChange", "playing");
-                // Populate inventory before resolving so it's ready
-                // when start() returns.
                 this._maybeRefreshInventory();
                 resolve();
             };
 
-            // Install as ctx.startupInputHandler so it intercepts prompts
-            // before they reach external inputRequired listeners.
-            this._ctx.startupInputHandler = (prompt) => {
+            // Install as inputInterceptor — returns true if handled,
+            // false to forward to external listeners.
+            this._ctx.inputInterceptor = (prompt) => {
                 switch (prompt.type) {
                     case "charSelect":
                         this.resolveCharSelect(false);
-                        break;
+                        return true;
                     case "line":
                         this.answerLine(name || "");
-                        break;
+                        return true;
                     case "yn":
                         if (skipTutorial) {
                             this.answerYn(prompt.default || "y");
-                        } else {
-                            // Forward to consumer — startup is done
-                            cleanup();
-                            this._emitter.emit("inputRequired", prompt);
+                            return true;
                         }
-                        break;
+                        cleanup();
+                        return false; // forward to consumer
                     case "menu": {
                         const items = prompt.menu?.items ?? [];
                         const how = prompt.menu?.selectionMode;
@@ -426,12 +504,9 @@ export class NethackStateManager {
                             .toLowerCase().includes("tutorial");
 
                         if (isTutorial && !skipTutorial) {
-                            // User wants the tutorial — forward to consumer
                             cleanup();
-                            this._emitter.emit("inputRequired", prompt);
+                            return false; // forward to consumer
                         } else if (how === 1 || how === "PICK_ONE") {
-                            // PICK_ONE: find the "no" option for tutorial,
-                            // otherwise pick the first selectable item.
                             const noItem = items.find(i => i.accelerator === "n");
                             const firstItem = items.find(i => i.identifier);
                             const pick = noItem || firstItem;
@@ -443,26 +518,23 @@ export class NethackStateManager {
                         } else {
                             this.selectMenuItems([]);
                         }
-                        break;
+                        return true;
                     }
                     case "key":
                     case "poskey":
                         keyPromptCount++;
                         if (sawMap && keyPromptCount >= 2) {
-                            // After map + at least 2 key prompts (text window + gameplay),
-                            // startup is done.
                             cleanup();
-                            this._emitter.emit("inputRequired", prompt);
-                        } else {
-                            this.sendKey(32);
+                            return false; // forward to consumer
                         }
-                        break;
+                        this.sendKey(32);
+                        return true;
                     case "extcmd":
                         this.sendExtCmd(-1);
-                        break;
+                        return true;
                     default:
-                        this.sendKey(27); // ESC fallback
-                        break;
+                        this.sendKey(27);
+                        return true;
                 }
             };
         });
