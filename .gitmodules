@@ -1,8 +1,8 @@
 [submodule "packages/wasm-367/NetHack"]
 	path = packages/wasm-367/NetHack
-	url = https://github.com/apowers313/NetHack.git
+	url = https://github.com/Malurth/NetHack.git
 	branch = wasm-3.6.7
 [submodule "packages/wasm-37/NetHack"]
 	path = packages/wasm-37/NetHack
-	url = https://github.com/apowers313/NetHack.git
+	url = https://github.com/Malurth/NetHack.git
 	branch = wasm-3.7
