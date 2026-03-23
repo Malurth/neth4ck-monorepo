@@ -1,11 +1,12 @@
 # neth4ck-monorepo
 
-NetHack compiled to WebAssembly — a monorepo containing the shim and WASM packages.
+A fork of [apowers313/neth4ck-monorepo](https://github.com/apowers313/neth4ck-monorepo) focused on providing a high-level API layer for building NetHack frontends. The upstream project compiles NetHack to WebAssembly and exposes a low-level callback interface; this fork adds `@neth4ck/api`, which wraps that into a stateful, event-driven API so frontends can interface with the game without dealing with raw WASM callbacks, glyph math, or prompt sequencing.
 
 ## Packages
 
 | Package                                     | Description                                                    |
 | ------------------------------------------- | -------------------------------------------------------------- |
+| [`@neth4ck/api`](./packages/api/)           | High-level stateful API for building NetHack frontends         |
 | [`@neth4ck/neth4ck`](./packages/neth4ck/)   | Version-agnostic shim — callback bridge and module initializer |
 | [`@neth4ck/wasm-367`](./packages/wasm-367/) | NetHack 3.6.7 WebAssembly build                                |
 | [`@neth4ck/wasm-37`](./packages/wasm-37/)   | NetHack 3.7 WebAssembly build                                  |
@@ -13,13 +14,23 @@ NetHack compiled to WebAssembly — a monorepo containing the shim and WASM pack
 ## Quick Start
 
 ```js
-import nethackStart from "@neth4ck/neth4ck";
-import createModule from "@neth4ck/wasm-367";
+import { NethackStateManager } from "@neth4ck/api";
+import createModule from "@neth4ck/wasm-37";
 
-await nethackStart(createModule, myCallback, {
+const game = new NethackStateManager();
+
+game.on("message", (msg) => console.log(msg.text));
+game.on("mapUpdate", (map) => render(map));
+game.on("inputRequired", (prompt) => {
+    // respond to the game's prompts
+});
+
+await game.start(createModule, {
     nethackOptions: { name: "Bubba" },
 });
 ```
+
+See the [API package README](./packages/api/README.md) for full documentation.
 
 ## Development
 
