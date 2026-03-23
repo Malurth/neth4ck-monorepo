@@ -73,15 +73,55 @@ export class NethackStateManager {
 
     async start(createModule, moduleOptions = {}) {
         const { nethackOptions, ...rest } = moduleOptions;
+
+        // Separate API-level options, birth options, and game options.
+        // Birth options (role/race/gender/align) are character creation
+        // parameters handled by the API — they don't belong in the core
+        // package's NETHACKOPTIONS formatter.
+        const {
+            skipTutorial = true,
+            role, race, gender, align,
+            ...gameOptions
+        } = nethackOptions ?? {};
+
+        // Build a preRun hook that appends birth options to NETHACKOPTIONS.
+        // This runs before nethackStart's own setupNethackOptions preRun,
+        // so both birth options and game options end up in the env var.
+        const birthOptParts = [];
+        if (role) birthOptParts.push(`role:${role}`);
+        if (race) birthOptParts.push(`race:${race}`);
+        if (gender) birthOptParts.push(`gender:${gender}`);
+        if (align) birthOptParts.push(`align:${align}`);
+
+        const consumerPreRun = rest.preRun ?? [];
+        const preRunArray = Array.isArray(consumerPreRun)
+            ? [...consumerPreRun] : [consumerPreRun];
+        if (birthOptParts.length > 0) {
+            preRunArray.push((mod) => {
+                const existing = (mod.ENV?.NETHACKOPTIONS ?? "").trim();
+                mod.ENV = mod.ENV || {};
+                mod.ENV.NETHACKOPTIONS = existing
+                    ? `${existing},${birthOptParts.join(",")}`
+                    : birthOptParts.join(",");
+            });
+        }
+
         const moduleConfig = {
             noInitialRun: true,
             ...rest,
-            nethackOptions,
+            preRun: preRunArray,
+            nethackOptions: Object.keys(gameOptions).length > 0
+                ? gameOptions : undefined,
         };
 
         this._module = await nethackStart(createModule, this._router, moduleConfig);
-        this._ctx.state.phase = "playing";
-        this._emitter.emit("phaseChange", "playing");
+        this._ctx.module = this._module;
+
+        // Install startup handler BEFORE _main so it catches the very first
+        // input prompt (charSelect). External listeners registered before
+        // start() also fire, but _runStartupSequence resolves the prompts.
+        const startupDone = this._runStartupSequence(
+            gameOptions?.name, { skipTutorial });
 
         // Start the game loop (non-blocking — Asyncify suspends on input).
         // _main() runs synchronously through init (which installs helpers via
@@ -97,7 +137,28 @@ export class NethackStateManager {
         // snapshot and only emits inventoryUpdate if something changed.
         this.on("inputRequired", () => this._maybeRefreshInventory());
 
+        // Wait for the startup sequence to complete (charSelect → askname →
+        // intro text → tutorial → first gameplay input).
+        await startupDone;
+
         return this;
+    }
+
+    /**
+     * Intro backstory text captured during startup (array of strings).
+     * Available after start() resolves. Empty if no intro text was shown.
+     */
+    get introText() {
+        return this._introText ?? [];
+    }
+
+    /**
+     * Messages captured during startup (e.g. "Hello Player, welcome to
+     * NetHack!"). Array of { text, attr, turn } objects. Available after
+     * start() resolves.
+     */
+    get startupMessages() {
+        return this._startupMessages ?? [];
     }
 
     // ── State Access ─────────────────────────
@@ -297,6 +358,115 @@ export class NethackStateManager {
     }
 
     // ── Internal ─────────────────────────────
+
+    /**
+     * Auto-resolve all startup prompts (charSelect, askname, intro text
+     * windows, tutorial yn) and transition to "playing" phase.
+     * Resolves when the game is waiting for the first real gameplay input.
+     */
+    _runStartupSequence(name, { skipTutorial = true } = {}) {
+        this._introText = [];
+        this._startupMessages = [];
+        let sawMap = false;
+        let keyPromptCount = 0;
+
+        // Capture text windows during startup
+        const textHandler = (lines) => {
+            this._introText.push(...lines);
+        };
+        this.on("textWindow", textHandler);
+
+        // Capture messages during startup (e.g. "Hello, welcome to NetHack!")
+        const messageHandler = (msg) => {
+            this._startupMessages.push(msg);
+        };
+        this.on("message", messageHandler);
+
+        // Track when the first map update arrives
+        const mapHandler = () => { sawMap = true; };
+        this.on("mapUpdate", mapHandler);
+
+        return new Promise((resolve) => {
+            const cleanup = () => {
+                this._ctx.startupInputHandler = null;
+                this.off("textWindow", textHandler);
+                this.off("message", messageHandler);
+                this.off("mapUpdate", mapHandler);
+                this._ctx.state.phase = "playing";
+                this._emitter.emit("phaseChange", "playing");
+                // Populate inventory before resolving so it's ready
+                // when start() returns.
+                this._maybeRefreshInventory();
+                resolve();
+            };
+
+            // Install as ctx.startupInputHandler so it intercepts prompts
+            // before they reach external inputRequired listeners.
+            this._ctx.startupInputHandler = (prompt) => {
+                switch (prompt.type) {
+                    case "charSelect":
+                        this.resolveCharSelect(false);
+                        break;
+                    case "line":
+                        this.answerLine(name || "");
+                        break;
+                    case "yn":
+                        if (skipTutorial) {
+                            this.answerYn(prompt.default || "y");
+                        } else {
+                            // Forward to consumer — startup is done
+                            cleanup();
+                            this._emitter.emit("inputRequired", prompt);
+                        }
+                        break;
+                    case "menu": {
+                        const items = prompt.menu?.items ?? [];
+                        const how = prompt.menu?.selectionMode;
+                        const isTutorial = (prompt.menu?.prompt ?? "")
+                            .toLowerCase().includes("tutorial");
+
+                        if (isTutorial && !skipTutorial) {
+                            // User wants the tutorial — forward to consumer
+                            cleanup();
+                            this._emitter.emit("inputRequired", prompt);
+                        } else if (how === 1 || how === "PICK_ONE") {
+                            // PICK_ONE: find the "no" option for tutorial,
+                            // otherwise pick the first selectable item.
+                            const noItem = items.find(i => i.accelerator === "n");
+                            const firstItem = items.find(i => i.identifier);
+                            const pick = noItem || firstItem;
+                            if (pick) {
+                                this.selectMenuItems([pick.identifier]);
+                            } else {
+                                this.dismissMenu();
+                            }
+                        } else {
+                            this.selectMenuItems([]);
+                        }
+                        break;
+                    }
+                    case "key":
+                    case "poskey":
+                        keyPromptCount++;
+                        if (sawMap && keyPromptCount >= 2) {
+                            // After map + at least 2 key prompts (text window + gameplay),
+                            // startup is done.
+                            cleanup();
+                            this._emitter.emit("inputRequired", prompt);
+                        } else {
+                            this.sendKey(32);
+                        }
+                        break;
+                    case "extcmd":
+                        this.sendExtCmd(-1);
+                        break;
+                    default:
+                        this.sendKey(27); // ESC fallback
+                        break;
+                }
+            };
+        });
+    }
 
     _buildMonsterRegistry() {
         const ng = globalThis.nethackGlobal;

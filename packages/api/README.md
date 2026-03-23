@@ -42,9 +42,14 @@ game.on("inputRequired", (prompt) => {
 await game.start(createModule, {
     nethackOptions: { name: "Rodney" },
 });
+
+// After start() resolves, the game is fully initialized:
+console.log(game.introText);        // backstory text lines
+console.log(game.startupMessages);  // welcome message(s)
+console.log(game.inventory);        // starting equipment
 ```
 
-The game loop runs automatically. NetHack suspends whenever it needs player input and emits an `inputRequired` event. Your frontend responds with the appropriate input method, and the game continues.
+`start()` handles the full startup sequence automatically — character selection, name entry, intro text dismissal, and tutorial skip. By the time the returned Promise resolves, the game is in the `"playing"` phase with map, stats, inventory, and messages all populated. The first `inputRequired` event is for actual gameplay input.
 
 ## Starting a Game
 
@@ -57,19 +62,54 @@ The game loop runs automatically. NetHack suspends whenever it needs player inpu
 
 ### `game.start(createModule, moduleOptions?)`
 
-Returns a `Promise` that resolves once the game is running.
+Returns a `Promise` that resolves once the game is fully initialized and ready for gameplay input.
 
 ```js
 await game.start(createModule, {
-    nethackOptions: { name: "Rodney", autoquiver: true, perm_invent: true },
+    nethackOptions: {
+        name: "Rodney",
+        role: "val",         // Valkyrie (omit or "random" for random)
+        race: "hum",         // Human
+        gender: "fem",       // Female
+        align: "neu",        // Neutral
+        autoquiver: true,
+        perm_invent: true,
+        skipTutorial: true,  // default: true — auto-dismiss 3.7's tutorial prompt
+    },
     print: () => {},     // suppress Emscripten stdout
     printErr: () => {},  // suppress Emscripten stderr
 });
 ```
 
 - **createModule** — default export from `@neth4ck/wasm-367` or `@neth4ck/wasm-37`
-- **nethackOptions** — passed as `NETHACKOPTIONS` env var
+- **nethackOptions** — character options and game settings. `name`, `role`, `race`, `gender`, `align` configure the character. Boolean flags (`autoquiver`, `perm_invent`) are passed as `NETHACKOPTIONS` env var. `skipTutorial` (default `true`) controls whether the 3.7 tutorial prompt is auto-dismissed.
 - All other properties are forwarded to the Emscripten Module config
+
+The startup sequence (character selection, name entry, intro text, tutorial) is handled automatically before `start()` resolves. Set `skipTutorial: false` to have the tutorial menu forwarded via `inputRequired` instead.
+
+### Advanced: Emscripten Module Config
+
+All unrecognized properties in `moduleOptions` are forwarded to the Emscripten Module. This includes `preRun` hooks for low-level setup:
+
+```js
+await game.start(createModule, {
+    nethackOptions: { name: "Rodney" },
+    preRun: [(mod) => {
+        // Set NETHACKOPTIONS beyond what nethackOptions covers
+        const existing = mod.ENV.NETHACKOPTIONS ?? "";
+        mod.ENV.NETHACKOPTIONS = existing + ",autopickup,pickup_types:$";
+
+        // Mount IndexedDB filesystem for save persistence
+        mod.FS.mkdir("/save");
+        mod.FS.mount(mod.IDBFS, {}, "/save");
+        mod.FS.syncfs(true, () => {});
+    }],
+    print: () => {},
+    printErr: () => {},
+});
+```
+
+`preRun` hooks run before `_main()`. The API's own NETHACKOPTIONS setup runs after consumer hooks, so `nethackOptions` values are appended to whatever you set.
 
 ## Sending Commands
 
@@ -204,6 +244,16 @@ game.visibleMonsters
 // [{ x, y, monsterIndex, name, isPet, isRidden, isDetected }, ...]
 ```
 
+### Startup Text
+
+Available after `start()` resolves:
+
+```js
+game.introText        // string[] — backstory lines ("It is written in the Book of...")
+game.startupMessages  // message[] — welcome messages captured during startup
+                      // e.g. [{ text: "Hello Rodney, welcome to NetHack!...", attr, turn }]
+```
+
 ### Game Phase
 
 ```js
@@ -235,7 +285,7 @@ game.off(event, callback);
 
 | Event | Callback Args | When |
 |---|---|---|
-| `inputRequired` | `(prompt)` | Game needs player input. `prompt.type` is `"key"`, `"yn"`, `"line"`, `"menu"`, `"poskey"`, `"extcmd"`, or `"charSelect"` |
+| `inputRequired` | `(prompt)` | Game needs player input. `prompt.type` is `"key"`, `"yn"`, `"line"`, `"menu"`, `"poskey"`, or `"extcmd"`. (Character creation prompts are handled internally by the startup sequence.) |
 | `mapUpdate` | `(map)` | Map tiles changed |
 | `statusChange` | `(status, changedFields)` | Status bar updated. `changedFields` lists which keys changed |
 | `message` | `(msg)` | New message. `msg: { text, attr, turn }` |

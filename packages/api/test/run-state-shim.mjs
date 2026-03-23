@@ -93,6 +93,9 @@ async function main() {
         results.events.conditionChange++;
     });
 
+    // After start() resolves, the game is past startup (charSelect, askname,
+    // intro text, tutorial are all handled internally). Only gameplay inputs
+    // reach this handler.
     game.on("inputRequired", (prompt) => {
         results.events.inputRequired++;
         if (results.inputTypes.length < 20) {
@@ -109,12 +112,12 @@ async function main() {
             outputAndExit();
         }
 
-        // Auto-respond to inputs to keep the game running
+        // If the startup handler already resolved this prompt, skip
+        if (!game.isWaitingForInput) return;
+
+        // Auto-respond to gameplay inputs to keep the game running
         try {
             switch (prompt.type) {
-                case "charSelect":
-                    game.resolveCharSelect(false);
-                    break;
                 case "key":
                 case "poskey":
                     game.sendKey(32); // space

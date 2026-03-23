@@ -136,37 +136,56 @@ export function createCallbackRouter(ctx) {
         const p = new Promise((resolve) => {
             ctx.pendingResolve = resolve;
         });
-        emitter.emit("inputRequired", prompt);
+        // During startup, the internal handler gets exclusive access to
+        // input prompts (charSelect, askname, text window dismissal, etc.)
+        // so that external listeners registered before start() don't
+        // accidentally try to resolve them.
+        // IMPORTANT: defer the handler call so that `p` is returned to
+        // the WASM callback first.  Asyncify must unwind before the
+        // promise is resolved, otherwise doRewind re-enters _main and
+        // corrupts the asyncify state.
+        if (ctx.startupInputHandler) {
+            setTimeout(() => ctx.startupInputHandler?.(prompt), 0);
+        } else {
+            emitter.emit("inputRequired", prompt);
+        }
         return p;
     }
 
     // Initialize map
     clearMap();
 
-    return async function routeCallback(name, ...args) {
+    return function routeCallback(name, ...args) {
         emitter.emit("rawCallback", name, args);
 
         switch (name) {
             // ── Map ──────────────────────────────
             case "shim_print_glyph": {
-                const [, x, y, glyph, bkglyph] = args;
+                const [, x, y, glyphArg, bkglyph] = args;
+                let glyph = glyphArg;
                 let tileIndex = 0;
                 let ch = 0;
                 let color = 0;
                 let special = 0;
                 const helpers = globalThis.nethackGlobal?.helpers;
-                // Use mapglyphHelper (3.6.7) for full tile info.
-                // mapGlyphInfoHelper (3.7) calls _map_glyphinfo which can
-                // trigger memory access issues during the print_glyph callback,
-                // so we skip it and use tileIndexForGlyph as the safe fallback.
+
                 if (helpers?.mapglyphHelper) {
+                    // 3.6.7: use mapglyphHelper for full tile info
                     const info = helpers.mapglyphHelper(glyph, x, y, 0);
                     tileIndex = info.tileIdx;
                     ch = info.ch;
                     color = info.color;
                     special = info.special;
-                } else if (helpers?.tileIndexForGlyph) {
-                    tileIndex = helpers.tileIndexForGlyph(glyph);
+                } else if (glyphArg > 65535) {
+                    // 3.7: glyphArg is a pointer to a glyph_info struct
+                    const mod = ctx.module;
+                    if (mod?.getValue) {
+                        glyph = mod.getValue(glyphArg, "i32");
+                        ch = mod.getValue(glyphArg + 4, "i32") & 0xFF;
+                        color = mod.getValue(glyphArg + 16, "i32");
+                        special = mod.getValue(glyphArg + 12, "i32");
+                        tileIndex = mod.getValue(glyphArg + 30, "i16");
+                    }
                 }
                 setTile(x, y, { glyph, bkglyph, tileIndex, ch, color, special, x, y });
 
@@ -313,7 +332,14 @@ export function createCallbackRouter(ctx) {
                 state.activeMenu = menu;
                 menuBuilders.delete(winId);
                 emitter.emit("menuOpen", menu);
-                return setInput({ type: "menu", menu });
+                // WASM expects an integer return (count of selected items,
+                // or -1 for cancel). Transform the resolved value.
+                return setInput({ type: "menu", menu }).then(value => {
+                    state.activeMenu = null;
+                    if (value === null || value === undefined) return -1;
+                    if (Array.isArray(value)) return value.length;
+                    return 0;
+                });
             }
 
             // ── Input ────────────────────────────
@@ -353,8 +379,22 @@ export function createCallbackRouter(ctx) {
                 return setInput({ type: "charSelect" });
             }
 
-            case "shim_askname":
-                return setInput({ type: "line", query: "Who are you? " });
+            case "shim_askname": {
+                // shim_askname receives a buffer pointer — the name must be
+                // written into WASM memory (not returned as a value).
+                const nameBuf = args[0];
+                return setInput({ type: "line", query: "Who are you? " })
+                    .then((name) => {
+                        if (nameBuf && ctx.module?.stringToUTF8) {
+                            ctx.module.stringToUTF8(
+                                String(name ?? ""),
+                                nameBuf,
+                                128, // PL_NSIZ is 32, but 128 is safe
+                            );
+                        }
+                        return 0;
+                    });
+            }
 
             // ── Window management ────────────────
             case "shim_create_nhwindow": {

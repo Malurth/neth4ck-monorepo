@@ -381,8 +381,10 @@ describe.each([
             expect(result.inputTypes.length).toBeGreaterThan(0);
         });
 
-        it("handles charSelect input type", () => {
-            expect(result.inputTypes).toContain("charSelect");
+        it("charSelect is handled internally by startup sequence", () => {
+            // charSelect no longer reaches external inputRequired listeners —
+            // it's resolved by _runStartupSequence before start() returns.
+            expect(result.inputTypes).not.toContain("charSelect");
         });
 
         it("handles key input type", () => {

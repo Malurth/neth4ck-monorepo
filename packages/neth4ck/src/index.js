@@ -3,9 +3,31 @@ import { createNethackOptions } from "./nethackOptions.js";
 
 let userCallback;
 
+/**
+ * Thin thenable whose .then() fires synchronously. When local_callback
+ * (in the WASM JS runtime) calls `.then()` on the return value, a
+ * SyncThenable makes Asyncify's handleSleep see the callback as
+ * synchronous — no unwind/rewind needed, no reentrancy risk.
+ *
+ * Real Promises (returned by input-blocking callbacks) still go through
+ * the normal async path because they are instanceof Promise.
+ */
+class SyncThenable {
+    constructor(value) { this.value = value; }
+    then(resolve) { resolve(this.value); return this; }
+}
+
 function nethackCallback(name, ...args) {
     decodeArgs(name, args);
-    return userCallback(name, ...args);
+    const result = userCallback(name, ...args);
+    // If the callback returned a real Promise (input-blocking), pass it
+    // through so Asyncify suspends properly. Otherwise wrap in a
+    // SyncThenable so .then() fires synchronously and Asyncify treats the
+    // callback as non-blocking.
+    if (result instanceof Promise) {
+        return result;
+    }
+    return new SyncThenable(result);
 }
 
 export default async function nethackStart(createModule, cb, inputModule = {}) {
@@ -46,7 +68,11 @@ export default async function nethackStart(createModule, cb, inputModule = {}) {
     const preRunArray = Array.isArray(existingPreRun) ? existingPreRun : [existingPreRun];
     preRunArray.push(function setupNethackOptions() {
         if (nethackOptions) {
-            Module.ENV.NETHACKOPTIONS = createNethackOptions(nethackOptions);
+            const optStr = createNethackOptions(nethackOptions);
+            const existing = (Module.ENV?.NETHACKOPTIONS ?? "").trim();
+            Module.ENV = Module.ENV || {};
+            Module.ENV.NETHACKOPTIONS = existing
+                ? `${existing},${optStr}` : optStr;
         }
     });
     Module.preRun = preRunArray;

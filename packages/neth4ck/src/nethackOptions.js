@@ -2,6 +2,10 @@ const optionMap = new Map([
     ["autoquiver", "boolean"],
     ["name", "string"],
     ["perm_invent", "boolean"],
+    ["role", "string"],
+    ["race", "string"],
+    ["gender", "string"],
+    ["align", "string"],
 ]);
 
 export function createNethackOptions(opt) {
