@@ -126,12 +126,28 @@ async function main() {
 
         inputCount++;
         if (inputCount >= MAX_INPUTS) {
-            // Capture final state and exit
+            // Capture final state before quitting
             results.finalStatus = { ...game.state.status };
             results.finalPhase = game.state.phase;
             results.finalConditions = [...game.state.conditions];
             results.messageCount = game.state.messages.length;
+
+            // Test quit() — capture phase via event listener since the
+            // WASM process may exit before the promise resolves.
+            if (prompt.type === "key" || prompt.type === "poskey") {
+                try {
+                    game.quit();
+                    // quit() is synchronous in Asyncify — by this point
+                    // the game has already reached gameOver phase.
+                    results.quitPhase = game.phase;
+                } catch (e) {
+                    results.quitError = e.message || String(e);
+                }
+                outputAndExit();
+                return;
+            }
             outputAndExit();
+            return;
         }
 
         // If the startup handler already resolved this prompt, skip
@@ -206,6 +222,7 @@ async function main() {
         // Capture all visible features (including obscured from terrain scan)
         results.allVisibleFeatures = game.visibleFeatures.map((f) => ({ ...f }));
         results.debug_cursor = { x: game.cursor.x, y: game.cursor.y };
+
 
     } catch (e) {
         results.error = `start() threw: ${e.message || e}`;

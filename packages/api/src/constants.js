@@ -209,8 +209,8 @@ export const ACTION_KEYS = {
 /** Extended commands available via #name\n */
 export const EXTENDED_COMMANDS = new Set([
     "chat", "dip", "enhance", "force", "invoke", "jump", "monster",
-    "loot", "pray", "rub", "sit", "turn", "untrap", "wipe", "offer",
-    "ride", "tip",
+    "loot", "pray", "quit", "rub", "sit", "turn", "untrap", "wipe",
+    "offer", "ride", "tip",
 ]);
 
 /**

@@ -297,36 +297,26 @@ describe("NethackStateManager construction", () => {
         expect(resolved).toBe("s".charCodeAt(0));
     });
 
-    it("action() dispatches extended commands as #name\\n", () => {
+    it("action() dispatches extended commands via # + extcmd index", () => {
         const game = new NethackStateManager();
-        const keys = [];
-        // Capture each sendKey call by simulating repeated key prompts
+        const calls = [];
+        // First call: sendKey("#") resolves a key prompt
         game._ctx.state.pendingInput = { type: "key" };
         game._ctx.pendingResolve = (val) => {
-            keys.push(val);
-            // Re-arm for next key in the sequence
-            game._ctx.state.pendingInput = { type: "key" };
-            game._ctx.pendingResolve = (v) => {
-                keys.push(v);
-                game._ctx.state.pendingInput = { type: "key" };
-                game._ctx.pendingResolve = (v2) => {
-                    keys.push(v2);
-                    game._ctx.state.pendingInput = { type: "key" };
-                    game._ctx.pendingResolve = (v3) => {
-                        keys.push(v3);
-                        game._ctx.state.pendingInput = { type: "key" };
-                        game._ctx.pendingResolve = (v4) => {
-                            keys.push(v4);
-                            game._ctx.state.pendingInput = { type: "key" };
-                            game._ctx.pendingResolve = (v5) => { keys.push(v5); };
-                        };
-                    };
-                };
+            calls.push({ type: "key", value: String.fromCharCode(val) });
+            // After "#", the game presents an extcmd prompt
+            game._ctx.state.pendingInput = { type: "extcmd" };
+            game._ctx.pendingResolve = (val2) => {
+                calls.push({ type: "extcmd", value: val2 });
             };
         };
+        // Mock _lookupExtCmdIndex to return a known index
+        game._lookupExtCmdIndex = (name) => name === "dip" ? 7 : -1;
         game.action("dip");
-        const chars = keys.map((k) => String.fromCharCode(k));
-        expect(chars).toEqual(["#", "d", "i", "p", "\n"]);
+        expect(calls).toEqual([
+            { type: "key", value: "#" },
+            { type: "extcmd", value: 7 },
+        ]);
     });
 
     it("action() falls back to handleKey for unknown actions", () => {
@@ -628,6 +618,15 @@ describe.each([
 
         it("has a valid alignment string", () => {
             expect(["Lawful", "Neutral", "Chaotic"]).toContain(result.finalStatus.align);
+        });
+    });
+
+    // ── Quit ────────────────────────────────
+
+    describe("quit", () => {
+        it("quit() resolves and reaches gameOver phase", () => {
+            expect(result.quitError).toBeUndefined();
+            expect(result.quitPhase).toBe("gameOver");
         });
     });
 

@@ -349,12 +349,11 @@ export class NethackStateManager {
             return;
         }
 
-        // Extended command (#name\n)
+        // Extended command (#name → extcmd index)
         if (EXTENDED_COMMANDS.has(name)) {
-            const keys = ["#", ...name.split(""), "\n"];
-            for (const key of keys) {
-                this.sendKey(key);
-            }
+            this.sendKey("#"); // triggers shim_get_ext_cmd prompt
+            const idx = this._lookupExtCmdIndex(name);
+            this.sendExtCmd(idx);
             return;
         }
 
@@ -373,6 +372,81 @@ export class NethackStateManager {
 
         // Fallback: treat as raw key
         this.handleKey(name);
+    }
+
+    /**
+     * Quit the game. Sends #quit and auto-confirms all subsequent prompts
+     * ("Really quit?" → y, "DYWYPI?" → n).
+     *
+     * Returns a promise that resolves when the quit sequence is complete
+     * (game over phase). The promise rejects if the game isn't in a state
+     * where quitting is possible.
+     */
+    quit() {
+        if (this._ctx.inputInterceptor) {
+            return Promise.reject(
+                new Error("another input sequence is already in progress")
+            );
+        }
+        const inputType = this.pendingInputType;
+        if (inputType && inputType !== "key" && inputType !== "poskey") {
+            return Promise.reject(
+                new Error(
+                    `cannot quit: game is waiting for '${inputType}' input, not gameplay`
+                )
+            );
+        }
+
+        // Send # to trigger the extended command prompt
+        this.sendKey("#");
+
+        return new Promise((resolve) => {
+            const done = () => {
+                this._ctx.inputInterceptor = null;
+                this._emitter.off("phaseChange", phaseHandler);
+                resolve();
+            };
+
+            // Intercept all prompts during the quit sequence
+            this._ctx.inputInterceptor = (prompt) => {
+                if (prompt.type === "extcmd") {
+                    // Extended command prompt — look up "quit" index from
+                    // the extcmdlist via WASM helper, or search constants
+                    const idx = this._lookupExtCmdIndex("quit");
+                    this.sendExtCmd(idx);
+                    return true;
+                }
+                if (prompt.type === "yn") {
+                    const query = (prompt.query || "").toLowerCase();
+                    if (query.includes("really quit")) {
+                        this.answerYn("y");
+                        return true;
+                    }
+                    if (query.includes("possessions identified")
+                            || query.includes("disclosure")) {
+                        this.answerYn("n");
+                        return true;
+                    }
+                    // Any other yn during quit — default to the prompt's default
+                    this.answerYn(prompt.default || "n");
+                    return true;
+                }
+                if (prompt.type === "key") {
+                    // "--More--" or similar during quit — dismiss
+                    this.sendKey(" ");
+                    return true;
+                }
+                return false;
+            };
+
+            // Resolve when game reaches gameOver phase
+            const phaseHandler = (phase) => {
+                if (phase === "gameOver") {
+                    done();
+                }
+            };
+            this._emitter.on("phaseChange", phaseHandler);
+        });
     }
 
     // ── Input Methods ────────────────────────
@@ -797,5 +871,22 @@ export class NethackStateManager {
             this._ctx.state.activeMenu = null;
         }
         resolve(value);
+    }
+
+    /**
+     * Look up an extended command index by name using the WASM helper.
+     * Falls back to -1 (cancel) if the helper is unavailable.
+     */
+    _lookupExtCmdIndex(name) {
+        const fn = this._module?._get_extcmd_index;
+        if (!fn) return -1;
+        // Allocate a C string on the WASM heap, call the lookup, then free
+        const mod = this._module;
+        const len = name.length + 1;
+        const ptr = mod._malloc(len);
+        mod.stringToUTF8(name, ptr, len);
+        const idx = fn(ptr);
+        mod._free(ptr);
+        return idx;
     }
 }

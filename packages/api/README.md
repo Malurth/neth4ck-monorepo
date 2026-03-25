@@ -123,6 +123,11 @@ game.action("search");     // named action → sends the correct key(s)
 game.action("eat:d");      // verb + item letter (eat, wield, drop, etc.)
 game.action("pray");       // extended command → sends #pray\n
 game.action("y");          // fallback: routes through handleKey
+
+// Quit the game (auto-confirms all prompts)
+game.quit();               // returns a Promise, resolves at gameOver
+// Or use action() for manual quit (you handle the yn prompts yourself):
+game.action("quit");       // sends #quit — you must answer "Really quit?" etc.
 ```
 
 `action()` handles all dispatch logic:

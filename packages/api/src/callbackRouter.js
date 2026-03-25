@@ -673,6 +673,13 @@ export function createCallbackRouter(ctx) {
             case "shim_resume_nhwindows":
             case "shim_get_nh_event":
             case "shim_exit_nhwindows":
+                // Game is shutting down (quit, save, or after death sequence).
+                // Ensure gameOver phase is set even for non-death exits.
+                if (state.phase !== "gameOver") {
+                    state.phase = "gameOver";
+                    emitter.emit("phaseChange", "gameOver");
+                }
+                return 0;
             case "shim_start_screen":
             case "shim_end_screen":
             case "shim_number_pad":
