@@ -188,6 +188,13 @@ export function createCallbackRouter(ctx) {
             state.status[key] = Number(value) || 0;
         }
         changedFields.add(key);
+
+        // Derive dlvl from levelDesc (e.g. "Dlvl:3" → 3)
+        if (key === "levelDesc") {
+            const match = state.status.levelDesc.match(/(\d+)/);
+            state.status.dlvl = match ? parseInt(match[1], 10) : 0;
+            changedFields.add("dlvl");
+        }
     }
 
     function setInput(prompt) {

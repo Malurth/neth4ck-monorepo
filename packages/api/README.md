@@ -72,9 +72,12 @@ await game.start(createModule, {
         race: "hum",         // Human
         gender: "fem",       // Female
         align: "neu",        // Neutral
-        autoquiver: true,
-        perm_invent: true,
         skipTutorial: true,  // default: true — auto-dismiss 3.7's tutorial prompt
+        options: [           // arbitrary NETHACKOPTIONS entries
+            "color", "showexp", "showscore", "time",
+            "number_pad:0", "runmode:walk", "boulder:0",
+            "autopickup", "pickup_types:$",
+        ],
     },
     print: () => {},     // suppress Emscripten stdout
     printErr: () => {},  // suppress Emscripten stderr
@@ -82,7 +85,10 @@ await game.start(createModule, {
 ```
 
 - **createModule** — default export from `@neth4ck/wasm-367` or `@neth4ck/wasm-37`
-- **nethackOptions** — character options and game settings. `name`, `role`, `race`, `gender`, `align` configure the character. Boolean flags (`autoquiver`, `perm_invent`) are passed as `NETHACKOPTIONS` env var. `skipTutorial` (default `true`) controls whether the 3.7 tutorial prompt is auto-dismissed.
+- **nethackOptions** — character and game settings:
+  - `name`, `role`, `race`, `gender`, `align` — character creation
+  - `skipTutorial` (default `true`) — auto-dismiss 3.7's tutorial prompt
+  - `options` — array of NETHACKOPTIONS strings (e.g. `["color", "showexp", "number_pad:0"]`). These are appended to the `NETHACKOPTIONS` env var before the game starts.
 - All other properties are forwarded to the Emscripten Module config
 
 The startup sequence (character selection, name entry, intro text, tutorial) is handled automatically before `start()` resolves. Set `skipTutorial: false` to have the tutorial menu forwarded via `inputRequired` instead.
@@ -95,10 +101,6 @@ All unrecognized properties in `moduleOptions` are forwarded to the Emscripten M
 await game.start(createModule, {
     nethackOptions: { name: "Rodney" },
     preRun: [(mod) => {
-        // Set NETHACKOPTIONS beyond what nethackOptions covers
-        const existing = mod.ENV.NETHACKOPTIONS ?? "";
-        mod.ENV.NETHACKOPTIONS = existing + ",autopickup,pickup_types:$";
-
         // Mount IndexedDB filesystem for save persistence
         mod.FS.mkdir("/save");
         mod.FS.mount(mod.IDBFS, {}, "/save");
@@ -109,7 +111,7 @@ await game.start(createModule, {
 });
 ```
 
-`preRun` hooks run before `_main()`. The API's own NETHACKOPTIONS setup runs after consumer hooks, so `nethackOptions` values are appended to whatever you set.
+`preRun` hooks run before `_main()`. Use them for filesystem setup or other low-level Emscripten configuration. For NETHACKOPTIONS, prefer `nethackOptions.options` instead.
 
 ## Sending Commands
 
@@ -223,7 +225,8 @@ game.status.gold        // gold pieces
 game.status.score       // score
 game.status.hunger      // hunger state string
 game.status.carrying    // encumbrance string
-game.status.levelDesc   // dungeon level (e.g. "Dlvl:1")
+game.status.levelDesc   // dungeon level string (e.g. "Dlvl:1")
+game.status.dlvl        // dungeon level number (parsed from levelDesc)
 game.status.title       // player name and title
 game.status.time        // turn count
 game.status.hd          // hit dice

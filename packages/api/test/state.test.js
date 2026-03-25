@@ -608,6 +608,13 @@ describe.each([
             expect(result.finalStatus.levelDesc).toMatch(/Dlvl:\d/);
         });
 
+        it("derives dlvl as a number from levelDesc", () => {
+            expect(result.finalStatus.dlvl).toBeGreaterThan(0);
+            // dlvl should match the number in levelDesc
+            const match = result.finalStatus.levelDesc.match(/(\d+)/);
+            expect(result.finalStatus.dlvl).toBe(parseInt(match[1], 10));
+        });
+
         it("has stat values in plausible ranges", () => {
             // NetHack starting stats are typically 3-25
             expect(result.finalStatus.dx).toBeGreaterThan(0);

@@ -57,6 +57,7 @@ export class NethackStateManager {
                 hp: 0,
                 hpMax: 0,
                 levelDesc: "",
+                dlvl: 0,
                 exp: 0,
             },
             conditions: new Set(),
@@ -77,35 +78,41 @@ export class NethackStateManager {
     async start(createModule, moduleOptions = {}) {
         const { nethackOptions, ...rest } = moduleOptions;
 
-        // Separate API-level options, birth options, and game options.
-        // Birth options (role/race/gender/align) are character creation
-        // parameters handled by the API — they don't belong in the core
-        // package's NETHACKOPTIONS formatter.
+        // Separate API-level options, birth options, game options, and
+        // general NETHACKOPTIONS entries.
         const {
             skipTutorial = true,
             role, race, gender, align,
+            options: extraOptions,
             ...gameOptions
         } = nethackOptions ?? {};
 
-        // Build a preRun hook that appends birth options to NETHACKOPTIONS.
-        // This runs before nethackStart's own setupNethackOptions preRun,
-        // so both birth options and game options end up in the env var.
-        const birthOptParts = [];
-        if (role) birthOptParts.push(`role:${role}`);
-        if (race) birthOptParts.push(`race:${race}`);
-        if (gender) birthOptParts.push(`gender:${gender}`);
-        if (align) birthOptParts.push(`align:${align}`);
+        // Build NETHACKOPTIONS parts from birth options + general options.
+        // These are appended to the NETHACKOPTIONS env var via a preRun hook,
+        // which runs before nethackStart's own setupNethackOptions preRun.
+        const optParts = [];
+        if (role) optParts.push(`role:${role}`);
+        if (race) optParts.push(`race:${race}`);
+        if (gender) optParts.push(`gender:${gender}`);
+        if (align) optParts.push(`align:${align}`);
+        // General NETHACKOPTIONS: accepts an array of strings like
+        // ["color", "number_pad:0", "showexp"] or a single string.
+        if (extraOptions) {
+            const extras = Array.isArray(extraOptions)
+                ? extraOptions : [extraOptions];
+            optParts.push(...extras);
+        }
 
         const consumerPreRun = rest.preRun ?? [];
         const preRunArray = Array.isArray(consumerPreRun)
             ? [...consumerPreRun] : [consumerPreRun];
-        if (birthOptParts.length > 0) {
+        if (optParts.length > 0) {
             preRunArray.push((mod) => {
                 const existing = (mod.ENV?.NETHACKOPTIONS ?? "").trim();
                 mod.ENV = mod.ENV || {};
                 mod.ENV.NETHACKOPTIONS = existing
-                    ? `${existing},${birthOptParts.join(",")}`
-                    : birthOptParts.join(",");
+                    ? `${existing},${optParts.join(",")}`
+                    : optParts.join(",");
             });
         }
 
