@@ -212,3 +212,50 @@ export const EXTENDED_COMMANDS = new Set([
     "loot", "pray", "rub", "sit", "turn", "untrap", "wipe", "offer",
     "ride", "tip",
 ]);
+
+/**
+ * Terrain type name → human-readable feature name.
+ * Keys are the string names from LEVL_TYP constants exported by WASM
+ * (e.g. LEVL_TYP[26] = "STAIRS" in 3.7).
+ * Used by the terrain scanner to identify features beneath other glyphs.
+ */
+export const TERRAIN_TYPE_NAMES = {
+    STAIRS: "staircase",
+    LADDER: "ladder",
+    FOUNTAIN: "fountain",
+    THRONE: "throne",
+    SINK: "sink",
+    GRAVE: "grave",
+    ALTAR: "altar",
+    POOL: "pool",
+    MOAT: "moat",
+    LAVAPOOL: "lava pool",
+    IRONBARS: "iron bars",
+    TREE: "tree",
+    ICE: "ice",
+};
+
+/**
+ * Terrain type name → display character (best guess without glyph data).
+ * Used when terrain scanner creates feature entries from levl[x][y].typ.
+ */
+export const TERRAIN_TYPE_CHARS = {
+    STAIRS: "<",  // direction unknown from typ alone; < is more common at spawn
+    LADDER: "<",
+    FOUNTAIN: "{",
+    THRONE: "\\",
+    SINK: "{",
+    GRAVE: "|",
+    ALTAR: "_",
+    POOL: "}",
+    MOAT: "}",
+    LAVAPOOL: "}",
+    IRONBARS: "#",
+    TREE: "#",
+    ICE: ".",
+};
+
+/**
+ * Terrain type name → NetHack display color (CLR_* values from color.h).
+ * Used when terrain scanner creates feature entries from levl[x][y].typ.
+ */

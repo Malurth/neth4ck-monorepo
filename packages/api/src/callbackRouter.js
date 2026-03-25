@@ -6,6 +6,8 @@ import {
     MAP_WIDTH,
     STATUS_FIELD_MAP,
     STRING_STATUS_FIELDS,
+    TERRAIN_TYPE_CHARS,
+    TERRAIN_TYPE_NAMES,
 } from "./constants.js";
 
 /**
@@ -127,7 +129,6 @@ export function createCallbackRouter(ctx) {
     function clearMap() {
         const emptyTile = () => ({
             glyph: 0,
-            bkglyph: 0,
             tileIndex: 0,
             ch: 0,
             color: 0,
@@ -219,7 +220,7 @@ export function createCallbackRouter(ctx) {
         switch (name) {
             // ── Map ──────────────────────────────
             case "shim_print_glyph": {
-                const [, x, y, glyphArg, bkglyph] = args;
+                const [, x, y, glyphArg] = args;
                 let glyph = glyphArg;
                 let tileIndex = 0;
                 let ch = 0;
@@ -228,7 +229,7 @@ export function createCallbackRouter(ctx) {
                 const helpers = globalThis.nethackGlobal?.helpers;
 
                 if (helpers?.mapglyphHelper) {
-                    // 3.6.7: use mapglyphHelper for full tile info
+                    // 3.6.7: glyphArg is a raw glyph int, use mapglyphHelper
                     const info = helpers.mapglyphHelper(glyph, x, y, 0);
                     tileIndex = info.tileIdx;
                     ch = info.ch;
@@ -245,7 +246,8 @@ export function createCallbackRouter(ctx) {
                         tileIndex = mod.getValue(glyphArg + 30, "i16");
                     }
                 }
-                // Classify the glyph and derive a label for statues/corpses
+
+                // Classify the foreground glyph
                 const glyphConstants = globalThis.nethackGlobal?.constants?.GLYPH;
                 const tileType = classifyGlyph(glyph, glyphConstants);
                 let tileLabel = null;
@@ -260,7 +262,7 @@ export function createCallbackRouter(ctx) {
                     }
                 }
 
-                setTile(x, y, { glyph, bkglyph, tileIndex, ch, color, special, x, y, tileType, tileLabel });
+                setTile(x, y, { glyph, tileIndex, ch, color, special, x, y, tileType, tileLabel });
 
                 // Track visible monsters — update persistent map by position.
                 // When a tile is redrawn with a monster glyph, add/update.
@@ -283,41 +285,46 @@ export function createCallbackRouter(ctx) {
                     monstersByPosition.delete(posKey);
                 }
 
-                // Track visible items (objects, statues, corpses)
-                if (tileType === "object" || tileType === "statue" || tileType === "corpse") {
+                // Track visible items (objects, statues, corpses).
+                // Persistent: items stay until position is explicitly cleared.
+                const isItem = (t) => t === "object" || t === "statue" || t === "corpse";
+                if (isItem(tileType)) {
                     const charStr = ch ? String.fromCharCode(ch) : "";
                     itemsByPosition.set(posKey, {
-                        x,
-                        y,
-                        ch: charStr,
-                        color,
-                        glyph,
-                        tileType,
-                        tileLabel,
+                        x, y, ch: charStr, color, glyph, tileType, tileLabel,
                         category: ITEM_CATEGORY_BY_CHAR[charStr] || "item",
+                        obscured: false,
                     });
-                } else {
+                } else if (tileType === "feature" || tileType === "nothing"
+                        || tileType === "unexplored" || tileType === null) {
+                    // Position is now plain terrain/empty — item is gone
                     itemsByPosition.delete(posKey);
+                } else if (itemsByPosition.has(posKey)) {
+                    // Something else drawn on top (monster, player) — mark obscured
+                    itemsByPosition.get(posKey).obscured = true;
                 }
 
-                // Track visible features (stairs, fountains, altars, etc.)
+                // Track visible features (stairs, fountains, altars, etc.).
+                // Persistent: features stay until position shows plain terrain.
                 if (tileType === "feature") {
                     const charStr = ch ? String.fromCharCode(ch) : "";
                     const featureName = FEATURE_NAMES[charStr];
                     if (featureName) {
                         featuresByPosition.set(posKey, {
-                            x,
-                            y,
-                            ch: charStr,
-                            color,
-                            glyph,
+                            x, y, ch: charStr, color, glyph,
                             name: featureName,
+                            obscured: false,
                         });
                     } else {
+                        // Non-notable feature (floor, wall) — clears any prior entry
                         featuresByPosition.delete(posKey);
                     }
-                } else {
+                } else if (tileType === "nothing" || tileType === "unexplored"
+                        || tileType === null) {
                     featuresByPosition.delete(posKey);
+                } else if (featuresByPosition.has(posKey)) {
+                    // Something else drawn on top (monster, player, item) — mark obscured
+                    featuresByPosition.get(posKey).obscured = true;
                 }
 
                 mapDirty = true;
@@ -329,6 +336,55 @@ export function createCallbackRouter(ctx) {
                 if (winName === "WIN_MAP" && mapDirty) {
                     mapDirty = false;
                     turnCounter++;
+
+                    // Terrain scan: check for features hidden beneath other glyphs.
+                    // Uses get_levl_typ(x,y) to read dungeon structure directly,
+                    // supplementing glyph-based persistence (which can miss features
+                    // that were never drawn as foreground, e.g. staircase at spawn).
+                    const getLevlTyp = ctx.module?._get_levl_typ;
+                    const getStairDir = ctx.module?._get_stair_direction;
+                    const getFeatureColor = ctx.module?._get_feature_color;
+                    const levlTyp = globalThis.nethackGlobal?.constants?.LEVL_TYP;
+                    if (getLevlTyp && levlTyp) {
+                        for (const [posKey, monster] of monstersByPosition) {
+                            if (featuresByPosition.has(posKey)) continue;
+                            const typ = getLevlTyp(monster.x, monster.y);
+                            const typName = levlTyp[typ];
+                            let featureName = TERRAIN_TYPE_NAMES[typName];
+                            let ch = TERRAIN_TYPE_CHARS[typName] || "?";
+
+                            // For stairs/ladders, resolve direction
+                            if (featureName && getStairDir
+                                    && (typName === "STAIRS" || typName === "LADDER")) {
+                                const dir = getStairDir(monster.x, monster.y);
+                                // 1=stairs up, 2=stairs down, 3=ladder up, 4=ladder down
+                                if (dir === 1 || dir === 3) {
+                                    featureName += " up";
+                                    ch = "<";
+                                } else if (dir === 2 || dir === 4) {
+                                    featureName += " down";
+                                    ch = ">";
+                                }
+                            }
+
+                            if (featureName) {
+                                // Get the exact display color via back_to_glyph + mapglyph
+                                const color = getFeatureColor
+                                    ? getFeatureColor(monster.x, monster.y)
+                                    : 0;
+                                featuresByPosition.set(posKey, {
+                                    x: monster.x,
+                                    y: monster.y,
+                                    ch,
+                                    color: color >= 0 ? color : 0,
+                                    glyph: 0,
+                                    name: featureName,
+                                    obscured: true,
+                                });
+                            }
+                        }
+                    }
+
                     state.visibleMonsters = Array.from(monstersByPosition.values());
                     state.visibleItems = Array.from(itemsByPosition.values());
                     state.visibleFeatures = Array.from(featuresByPosition.values());

@@ -92,6 +92,8 @@ async function main() {
             if (!results.visibleFeaturesSample) {
                 results.visibleFeaturesSample = { ...features[0] };
             }
+            // Always capture latest features snapshot (includes obscured)
+            results.allVisibleFeatures = features.map((f) => ({ ...f }));
         }
     });
 
@@ -201,6 +203,10 @@ async function main() {
         if (inv.length > 0) {
             results.inventorySample = { ...inv[0] };
         }
+        // Capture all visible features (including obscured from terrain scan)
+        results.allVisibleFeatures = game.visibleFeatures.map((f) => ({ ...f }));
+        results.debug_cursor = { x: game.cursor.x, y: game.cursor.y };
+
     } catch (e) {
         results.error = `start() threw: ${e.message || e}`;
         outputAndExit();

@@ -538,6 +538,7 @@ describe.each([
                 expect(typeof result.visibleItemsSample.color).toBe("number");
                 expect(typeof result.visibleItemsSample.tileType).toBe("string");
                 expect(typeof result.visibleItemsSample.category).toBe("string");
+                expect(typeof result.visibleItemsSample.obscured).toBe("boolean");
                 expect(["object", "statue", "corpse"]).toContain(
                     result.visibleItemsSample.tileType,
                 );
@@ -554,7 +555,32 @@ describe.each([
                 expect(typeof result.visibleFeaturesSample.color).toBe("number");
                 expect(typeof result.visibleFeaturesSample.name).toBe("string");
                 expect(result.visibleFeaturesSample.name.length).toBeGreaterThan(0);
+                expect(typeof result.visibleFeaturesSample.obscured).toBe("boolean");
             }
+        });
+
+        it("includes obscured staircase up under player at spawn", () => {
+            // Player spawns on staircase up — the terrain scanner reads
+            // levl[x][y].typ via get_levl_typ() and direction via
+            // get_stair_direction(), reporting it as obscured.
+            expect(result.allVisibleFeatures).toBeDefined();
+            const obscuredStaircase = result.allVisibleFeatures?.find(
+                (f) => f.obscured && f.name === "staircase up"
+            );
+            expect(obscuredStaircase).toBeDefined();
+            expect(obscuredStaircase.x).toBe(result.debug_cursor.x);
+            expect(obscuredStaircase.y).toBe(result.debug_cursor.y);
+            expect(obscuredStaircase.ch).toBe("<");
+        });
+
+        it("obscured staircase has display color from mapglyph", () => {
+            const obscuredStaircase = result.allVisibleFeatures?.find(
+                (f) => f.obscured && f.name === "staircase up"
+            );
+            expect(obscuredStaircase).toBeDefined();
+            // Color comes from get_feature_color() which calls back_to_glyph + mapglyph.
+            // 3.6.7 returns CLR_GRAY (7), 3.7 returns CLR_YELLOW (11).
+            expect(obscuredStaircase.color).toBeGreaterThan(0);
         });
 
         it("has inventory items after start()", () => {

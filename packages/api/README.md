@@ -285,15 +285,20 @@ Updated on each `mapUpdate` — no need to scan the full map yourself:
 ```js
 // Items on the floor (objects, statues, corpses)
 game.visibleItems
-// [{ x, y, ch, color, glyph, tileType, tileLabel, category }, ...]
+// [{ x, y, ch, color, glyph, tileType, tileLabel, category, obscured }, ...]
 //   tileType: "object", "statue", or "corpse"
 //   tileLabel: descriptive name for statues/corpses (e.g. "goblin corpse")
 //   category: item category string (e.g. "weapon", "potion")
+//   obscured: true if hidden under another glyph (e.g. monster standing on item)
 
 // Notable features (stairs, fountains, altars, etc.)
 game.visibleFeatures
-// [{ x, y, ch, color, glyph, name }, ...]
-//   name: human-readable (e.g. "staircase down", "fountain or sink")
+// [{ x, y, ch, color, glyph, name, obscured }, ...]
+//   name: human-readable (e.g. "staircase down", "fountain or sink", "staircase")
+//   obscured: true if hidden under another glyph (e.g. player on staircase)
+//   Note: features beneath monsters are detected via dungeon terrain scan
+//   (get_levl_typ + get_stair_direction + get_feature_color), so even
+//   the staircase at spawn is reported with correct name, direction, and color.
 ```
 
 ### Startup Text

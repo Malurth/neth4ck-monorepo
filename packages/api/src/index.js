@@ -15,6 +15,8 @@ export {
     OBJ_CLASS_NAMES,
     PHASE,
     STATUS_FIELDS,
+    TERRAIN_TYPE_CHARS,
+    TERRAIN_TYPE_NAMES,
 } from "./constants.js";
 export { EventEmitter } from "./eventEmitter.js";
 export { NethackStateManager } from "./stateManager.js";
