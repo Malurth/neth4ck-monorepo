@@ -34,6 +34,10 @@ const results = {
     inputTypes: [],
     phaseChanges: [],
     mapTileSample: null,
+    visibleItemsSample: null,
+    visibleFeaturesSample: null,
+    visibleItemsCount: 0,
+    visibleFeaturesCount: 0,
     // State snapshot at exit
     finalStatus: null,
     finalPhase: null,
@@ -71,6 +75,22 @@ async function main() {
                     }
                 }
                 if (results.mapTileSample) break;
+            }
+        }
+
+        // Track visible items and features
+        const items = game.visibleItems;
+        const features = game.visibleFeatures;
+        if (items.length > 0) {
+            results.visibleItemsCount = Math.max(results.visibleItemsCount, items.length);
+            if (!results.visibleItemsSample) {
+                results.visibleItemsSample = { ...items[0] };
+            }
+        }
+        if (features.length > 0) {
+            results.visibleFeaturesCount = Math.max(results.visibleFeaturesCount, features.length);
+            if (!results.visibleFeaturesSample) {
+                results.visibleFeaturesSample = { ...features[0] };
             }
         }
     });

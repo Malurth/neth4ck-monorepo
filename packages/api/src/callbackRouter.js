@@ -1,5 +1,7 @@
 import {
     CONDITION_NAMES,
+    FEATURE_NAMES,
+    ITEM_CATEGORY_BY_CHAR,
     MAP_HEIGHT,
     MAP_WIDTH,
     STATUS_FIELD_MAP,
@@ -111,6 +113,8 @@ export function createCallbackRouter(ctx) {
     // This avoids losing monsters that didn't move (NetHack only redraws
     // tiles that changed).
     const monstersByPosition = new Map();
+    const itemsByPosition = new Map();
+    const featuresByPosition = new Map();
 
     function setTile(x, y, tile) {
         if (options.mapCoordinateOrder === "xy") {
@@ -279,6 +283,43 @@ export function createCallbackRouter(ctx) {
                     monstersByPosition.delete(posKey);
                 }
 
+                // Track visible items (objects, statues, corpses)
+                if (tileType === "object" || tileType === "statue" || tileType === "corpse") {
+                    const charStr = ch ? String.fromCharCode(ch) : "";
+                    itemsByPosition.set(posKey, {
+                        x,
+                        y,
+                        ch: charStr,
+                        color,
+                        glyph,
+                        tileType,
+                        tileLabel,
+                        category: ITEM_CATEGORY_BY_CHAR[charStr] || "item",
+                    });
+                } else {
+                    itemsByPosition.delete(posKey);
+                }
+
+                // Track visible features (stairs, fountains, altars, etc.)
+                if (tileType === "feature") {
+                    const charStr = ch ? String.fromCharCode(ch) : "";
+                    const featureName = FEATURE_NAMES[charStr];
+                    if (featureName) {
+                        featuresByPosition.set(posKey, {
+                            x,
+                            y,
+                            ch: charStr,
+                            color,
+                            glyph,
+                            name: featureName,
+                        });
+                    } else {
+                        featuresByPosition.delete(posKey);
+                    }
+                } else {
+                    featuresByPosition.delete(posKey);
+                }
+
                 mapDirty = true;
                 return 0;
             }
@@ -289,6 +330,8 @@ export function createCallbackRouter(ctx) {
                     mapDirty = false;
                     turnCounter++;
                     state.visibleMonsters = Array.from(monstersByPosition.values());
+                    state.visibleItems = Array.from(itemsByPosition.values());
+                    state.visibleFeatures = Array.from(featuresByPosition.values());
                     emitter.emit("mapUpdate", state.map);
                     if (state.visibleMonsters.length > 0) {
                         emitter.emit("monstersUpdate", state.visibleMonsters);
@@ -311,6 +354,8 @@ export function createCallbackRouter(ctx) {
                 if (args[0] === "WIN_MAP") {
                     clearMap();
                     monstersByPosition.clear();
+                    itemsByPosition.clear();
+                    featuresByPosition.clear();
                 }
                 return 0;
 

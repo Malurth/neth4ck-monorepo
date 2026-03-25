@@ -67,6 +67,8 @@ export class NethackStateManager {
             cursor: { x: 0, y: 0 },
             monsters: null,
             visibleMonsters: [],
+            visibleItems: [],
+            visibleFeatures: [],
         };
     }
 
@@ -236,6 +238,24 @@ export class NethackStateManager {
      */
     get visibleMonsters() {
         return this._ctx.state.visibleMonsters;
+    }
+
+    /**
+     * Items visible on the current map frame (objects, statues, corpses).
+     * Each entry: { x, y, ch, color, glyph, tileType, tileLabel, category }
+     * Updated on each mapUpdate event.
+     */
+    get visibleItems() {
+        return this._ctx.state.visibleItems;
+    }
+
+    /**
+     * Notable features visible on the current map frame (stairs, fountains, altars, etc.).
+     * Each entry: { x, y, ch, color, glyph, name }
+     * Updated on each mapUpdate event.
+     */
+    get visibleFeatures() {
+        return this._ctx.state.visibleFeatures;
     }
 
     /**

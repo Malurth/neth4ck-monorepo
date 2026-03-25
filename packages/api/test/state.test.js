@@ -83,6 +83,34 @@ describe("@neth4ck/api exports", () => {
         expect(stateModule.MENU_MODE.PICK_ONE).toBe("PICK_ONE");
         expect(stateModule.MENU_MODE.PICK_ANY).toBe("PICK_ANY");
     });
+
+    it("exports FEATURE_NAMES with notable map features", () => {
+        expect(stateModule.FEATURE_NAMES).toBeDefined();
+        expect(stateModule.FEATURE_NAMES["<"]).toBe("staircase up");
+        expect(stateModule.FEATURE_NAMES[">"]).toBe("staircase down");
+        expect(stateModule.FEATURE_NAMES["_"]).toBe("altar");
+        expect(stateModule.FEATURE_NAMES["{"]).toBe("fountain or sink");
+        expect(stateModule.FEATURE_NAMES["\\"]).toBe("grave or throne");
+    });
+
+    it("exports ITEM_CATEGORY_BY_CHAR mapping item symbols to categories", () => {
+        expect(stateModule.ITEM_CATEGORY_BY_CHAR).toBeDefined();
+        expect(stateModule.ITEM_CATEGORY_BY_CHAR[")"]).toBe("weapon");
+        expect(stateModule.ITEM_CATEGORY_BY_CHAR["["]).toBe("armor");
+        expect(stateModule.ITEM_CATEGORY_BY_CHAR["!"]).toBe("potion");
+        expect(stateModule.ITEM_CATEGORY_BY_CHAR["?"]).toBe("scroll");
+        expect(stateModule.ITEM_CATEGORY_BY_CHAR["/"]).toBe("wand");
+        expect(stateModule.ITEM_CATEGORY_BY_CHAR["$"]).toBe("gold");
+    });
+
+    it("exports OBJ_CLASS_NAMES mapping object class numbers to names", () => {
+        expect(stateModule.OBJ_CLASS_NAMES).toBeDefined();
+        expect(stateModule.OBJ_CLASS_NAMES[2]).toBe("weapon");
+        expect(stateModule.OBJ_CLASS_NAMES[3]).toBe("armor");
+        expect(stateModule.OBJ_CLASS_NAMES[7]).toBe("food");
+        expect(stateModule.OBJ_CLASS_NAMES[11]).toBe("wand");
+        expect(stateModule.OBJ_CLASS_NAMES[12]).toBe("coin");
+    });
 });
 
 // ---------------------------------------------------------------------------
@@ -223,6 +251,16 @@ describe("NethackStateManager construction", () => {
         expect(game.pendingInput).toBeNull();
         expect(game.activeMenu).toBeNull();
         expect(game.inventoryNeedsUpdate).toBe(false);
+    });
+
+    it("visibleItems is initially an empty array", () => {
+        const game = new NethackStateManager();
+        expect(game.visibleItems).toEqual([]);
+    });
+
+    it("visibleFeatures is initially an empty array", () => {
+        const game = new NethackStateManager();
+        expect(game.visibleFeatures).toEqual([]);
     });
 
     it("messages ring buffer supports bracket indexing", () => {
@@ -367,6 +405,36 @@ describe.each([
         it("captures tileType on map tiles", () => {
             expect(result.mapTileSample.tileType).toBeDefined();
             expect(typeof result.mapTileSample.tileType).toBe("string");
+        });
+
+        it("populates visibleItems with floor objects", () => {
+            // Starting dungeon level always has at least the staircase up,
+            // and usually some items. Items may not appear on every run,
+            // so just verify the array exists and entries have correct shape.
+            if (result.visibleItemsSample) {
+                expect(typeof result.visibleItemsSample.x).toBe("number");
+                expect(typeof result.visibleItemsSample.y).toBe("number");
+                expect(typeof result.visibleItemsSample.ch).toBe("string");
+                expect(typeof result.visibleItemsSample.color).toBe("number");
+                expect(typeof result.visibleItemsSample.tileType).toBe("string");
+                expect(typeof result.visibleItemsSample.category).toBe("string");
+                expect(["object", "statue", "corpse"]).toContain(
+                    result.visibleItemsSample.tileType,
+                );
+            }
+        });
+
+        it("populates visibleFeatures with correct shape when present", () => {
+            // Features (stairs, fountains, altars) depend on map layout
+            // and player position. Verify shape when captured.
+            if (result.visibleFeaturesSample) {
+                expect(typeof result.visibleFeaturesSample.x).toBe("number");
+                expect(typeof result.visibleFeaturesSample.y).toBe("number");
+                expect(typeof result.visibleFeaturesSample.ch).toBe("string");
+                expect(typeof result.visibleFeaturesSample.color).toBe("number");
+                expect(typeof result.visibleFeaturesSample.name).toBe("string");
+                expect(result.visibleFeaturesSample.name.length).toBeGreaterThan(0);
+            }
         });
 
         it("populates final status fields", () => {

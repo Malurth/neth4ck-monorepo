@@ -139,3 +139,50 @@ export const INPUT_TYPE = {
     EXT_CMD: "extcmd",
     CHAR_SELECT: "charSelect",
 };
+
+/** Notable map feature characters → human-readable names */
+export const FEATURE_NAMES = {
+    "{": "fountain or sink",
+    "\\": "grave or throne",
+    "_": "altar",
+    "<": "staircase up",
+    ">": "staircase down",
+};
+
+/** Item display character → category name */
+export const ITEM_CATEGORY_BY_CHAR = {
+    ")": "weapon",
+    "[": "armor",
+    "=": "ring",
+    '"': "amulet",
+    "(": "tool",
+    "%": "food",
+    "!": "potion",
+    "?": "scroll",
+    "+": "spellbook",
+    "/": "wand",
+    "*": "gem",
+    "$": "gold",
+    "`": "rock",
+};
+
+/** Object class number → string name */
+export const OBJ_CLASS_NAMES = {
+    1: "random",
+    2: "weapon",
+    3: "armor",
+    4: "ring",
+    5: "amulet",
+    6: "tool",
+    7: "food",
+    8: "potion",
+    9: "scroll",
+    10: "spellbook",
+    11: "wand",
+    12: "coin",
+    13: "gem",
+    14: "rock",
+    15: "ball",
+    16: "chain",
+    17: "venom",
+};
