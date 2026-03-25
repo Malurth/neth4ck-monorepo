@@ -219,6 +219,50 @@ describe("NethackStateManager construction", () => {
         expect(() => game.answerYn("y")).toThrow("no pending input");
     });
 
+    it("handleKey throws on no pending input", () => {
+        const game = new NethackStateManager();
+        expect(() => game.handleKey("y")).toThrow("no pending input");
+    });
+
+    it("handleKey routes to answerYn for yn prompts", () => {
+        const game = new NethackStateManager();
+        let resolved = null;
+        game._ctx.state.pendingInput = { type: "yn", query: "Really?" };
+        game._ctx.pendingResolve = (val) => { resolved = val; };
+        game.handleKey("y");
+        expect(resolved).toBe("y".charCodeAt(0));
+        expect(game.pendingInput).toBeNull();
+    });
+
+    it("handleKey routes to dismissMenu on ESC for menu prompts", () => {
+        const game = new NethackStateManager();
+        let resolved = null;
+        game._ctx.state.pendingInput = { type: "menu" };
+        game._ctx.state.activeMenu = { items: [] };
+        game._ctx.pendingResolve = (val) => { resolved = val; };
+        game.handleKey("\x1b");
+        expect(resolved).toBe(-1);
+        expect(game.activeMenu).toBeNull();
+    });
+
+    it("handleKey routes to selectMenuItem for menu prompts", () => {
+        const game = new NethackStateManager();
+        let resolved = null;
+        game._ctx.state.pendingInput = { type: "menu" };
+        game._ctx.pendingResolve = (val) => { resolved = val; };
+        game.handleKey("a");
+        expect(resolved).toEqual(["a"]);
+    });
+
+    it("handleKey routes to sendKey for key/poskey prompts", () => {
+        const game = new NethackStateManager();
+        let resolved = null;
+        game._ctx.state.pendingInput = { type: "key" };
+        game._ctx.pendingResolve = (val) => { resolved = val; };
+        game.handleKey("j");
+        expect(resolved).toBe("j".charCodeAt(0));
+    });
+
     it("throws on verb method when game is at wrong prompt type", () => {
         const game = new NethackStateManager();
         // Simulate a yn prompt being active

@@ -319,6 +319,31 @@ export class NethackStateManager {
 
     // ── Input Methods ────────────────────────
 
+    /**
+     * Route a keystroke to the correct input handler based on the current
+     * prompt type. Convenience method so frontends don't need to inspect
+     * pendingInputType and branch themselves.
+     *
+     * - yn prompt → answerYn
+     * - menu prompt + ESC → dismissMenu; otherwise selectMenuItem
+     * - key/poskey/anything else → sendKey
+     */
+    handleKey(key) {
+        const type = this.pendingInputType;
+        if (type === "yn") {
+            this.answerYn(key);
+        } else if (type === "menu") {
+            const code = typeof key === "string" ? key.charCodeAt(0) : key;
+            if (code === 27) { // ESC
+                this.dismissMenu();
+            } else {
+                this.selectMenuItem(key);
+            }
+        } else {
+            this.sendKey(key);
+        }
+    }
+
     sendKey(key) {
         const code = typeof key === "string" ? key.charCodeAt(0) : key;
         this._resolveInput(["key", "poskey"], code);
