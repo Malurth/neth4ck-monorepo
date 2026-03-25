@@ -674,19 +674,21 @@ export function createCallbackRouter(ctx) {
             case "shim_putmsghistory":
                 return 0;
 
+            case "shim_exit_nhwindows":
+                // Game is shutting down (quit, save, or after death sequence).
+                // Ensure gameOver phase is set even for non-death exits.
+                // Only trigger if we're past the startup phase — exit_nhwindows
+                // is also called during initial window system setup.
+                if (state.phase === "playing") {
+                    state.phase = "gameOver";
+                    emitter.emit("phaseChange", "gameOver");
+                }
+                return 0;
             case "shim_mark_synch":
             case "shim_wait_synch":
             case "shim_suspend_nhwindows":
             case "shim_resume_nhwindows":
             case "shim_get_nh_event":
-            case "shim_exit_nhwindows":
-                // Game is shutting down (quit, save, or after death sequence).
-                // Ensure gameOver phase is set even for non-death exits.
-                if (state.phase !== "gameOver") {
-                    state.phase = "gameOver";
-                    emitter.emit("phaseChange", "gameOver");
-                }
-                return 0;
             case "shim_start_screen":
             case "shim_end_screen":
             case "shim_number_pad":

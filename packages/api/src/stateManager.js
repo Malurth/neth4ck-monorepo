@@ -414,56 +414,47 @@ export class NethackStateManager {
             );
         }
 
-        // Send # to trigger the extended command prompt
+        // Install interceptor to auto-answer all prompts during quit
+        this._ctx.inputInterceptor = (prompt) => {
+            if (prompt.type === "extcmd") {
+                const idx = this._lookupExtCmdIndex("quit");
+                this.sendExtCmd(idx);
+                return true;
+            }
+            if (prompt.type === "yn") {
+                const query = (prompt.query || "").toLowerCase();
+                if (query.includes("really quit")) {
+                    this.answerYn("y");
+                    return true;
+                }
+                if (query.includes("possessions identified")
+                        || query.includes("disclosure")) {
+                    this.answerYn("n");
+                    return true;
+                }
+                // Any other yn during quit — default to the prompt's default
+                this.answerYn(prompt.default || "n");
+                return true;
+            }
+            if (prompt.type === "key") {
+                // "--More--" or similar during quit — dismiss
+                this.sendKey(" ");
+                return true;
+            }
+            return false;
+        };
+
+        // Send # to trigger the extended command prompt.
+        // The entire quit sequence (extcmd → yn prompts → exit) runs
+        // synchronously via Asyncify before sendKey returns.
         this.sendKey("#");
 
-        return new Promise((resolve) => {
-            const done = () => {
-                this._ctx.inputInterceptor = null;
-                this._emitter.off("phaseChange", phaseHandler);
-                resolve();
-            };
+        // Clean up and set gameOver — the WASM process has exited by now.
+        this._ctx.inputInterceptor = null;
+        this._ctx.state.phase = "gameOver";
+        this._emitter.emit("phaseChange", "gameOver");
 
-            // Intercept all prompts during the quit sequence
-            this._ctx.inputInterceptor = (prompt) => {
-                if (prompt.type === "extcmd") {
-                    // Extended command prompt — look up "quit" index from
-                    // the extcmdlist via WASM helper, or search constants
-                    const idx = this._lookupExtCmdIndex("quit");
-                    this.sendExtCmd(idx);
-                    return true;
-                }
-                if (prompt.type === "yn") {
-                    const query = (prompt.query || "").toLowerCase();
-                    if (query.includes("really quit")) {
-                        this.answerYn("y");
-                        return true;
-                    }
-                    if (query.includes("possessions identified")
-                            || query.includes("disclosure")) {
-                        this.answerYn("n");
-                        return true;
-                    }
-                    // Any other yn during quit — default to the prompt's default
-                    this.answerYn(prompt.default || "n");
-                    return true;
-                }
-                if (prompt.type === "key") {
-                    // "--More--" or similar during quit — dismiss
-                    this.sendKey(" ");
-                    return true;
-                }
-                return false;
-            };
-
-            // Resolve when game reaches gameOver phase
-            const phaseHandler = (phase) => {
-                if (phase === "gameOver") {
-                    done();
-                }
-            };
-            this._emitter.on("phaseChange", phaseHandler);
-        });
+        return Promise.resolve();
     }
 
     // ── Input Methods ────────────────────────
