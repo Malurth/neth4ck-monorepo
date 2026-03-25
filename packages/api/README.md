@@ -113,9 +113,38 @@ await game.start(createModule, {
 
 ## Sending Commands
 
+### High-level Actions
+
+The simplest way to interact with the game — no need to know about raw keys or prompt types:
+
+```js
+game.action("move_n");     // directional movement (move_n, move_se, etc.)
+game.action("search");     // named action → sends the correct key(s)
+game.action("eat:d");      // verb + item letter (eat, wield, drop, etc.)
+game.action("pray");       // extended command → sends #pray\n
+game.action("y");          // fallback: routes through handleKey
+```
+
+`action()` handles all dispatch logic:
+1. **`verb:letter`** — calls the verb method (e.g. `eat("d")`) which manages the item prompt sequence
+2. **`move_*`** — directional movement via `move()`
+3. **Extended commands** — sends `#name\n` key sequence
+4. **Mapped actions** — looks up the key in `ACTION_KEYS` and sends it
+5. **Fallback** — routes through `handleKey()`
+
+```js
+game.handleKey("y");  // route a keystroke based on current prompt type:
+                      //   yn prompt → answerYn
+                      //   menu + ESC → dismissMenu
+                      //   menu + letter → selectMenuItem
+                      //   anything else → sendKey
+```
+
+### Low-level Input
+
 All input methods respond to the current `inputRequired` prompt. Calling them when no input is pending (or with the wrong type) throws an error.
 
-### Keyboard Input
+#### Keyboard
 
 ```js
 game.sendKey("j");          // send a single key (string or char code)
@@ -128,14 +157,14 @@ game.search();              // send "s" — search adjacent squares
 
 Directions: `"n"`, `"s"`, `"e"`, `"w"`, `"ne"`, `"nw"`, `"se"`, `"sw"`, `"up"`, `"down"`
 
-### Prompts
+#### Prompts
 
 ```js
 game.answerYn("y");               // answer a yes/no question
 game.answerLine("Excalibur");     // answer a text prompt (e.g. "Call this item:")
 ```
 
-### Menus
+#### Menus
 
 ```js
 game.selectMenuItems([ids]);  // select items by identifier
@@ -143,7 +172,7 @@ game.selectMenuItem(id);      // select a single item
 game.dismissMenu();           // close without selecting (ESC)
 ```
 
-### Other
+#### Other
 
 ```js
 game.sendPosition(x, y);         // send a map coordinate (for position prompts)
@@ -248,6 +277,24 @@ game.visibleMonsters
 // [{ x, y, monsterIndex, name, isPet, isRidden, isDetected }, ...]
 ```
 
+### Visible Items & Features
+
+Updated on each `mapUpdate` — no need to scan the full map yourself:
+
+```js
+// Items on the floor (objects, statues, corpses)
+game.visibleItems
+// [{ x, y, ch, color, glyph, tileType, tileLabel, category }, ...]
+//   tileType: "object", "statue", or "corpse"
+//   tileLabel: descriptive name for statues/corpses (e.g. "goblin corpse")
+//   category: item category string (e.g. "weapon", "potion")
+
+// Notable features (stairs, fountains, altars, etc.)
+game.visibleFeatures
+// [{ x, y, ch, color, glyph, name }, ...]
+//   name: human-readable (e.g. "staircase down", "fountain or sink")
+```
+
 ### Startup Text
 
 Available after `start()` resolves:
@@ -306,17 +353,29 @@ game.off(event, callback);
 
 ```js
 import {
-    DIRECTIONS,     // { n: "k", s: "j", e: "l", w: "h", ne: "u", ... }
-    KEY_CODES,      // { ESC: 27, SPACE: 32, ENTER: 13, TAB: 9 }
-    MAP_WIDTH,      // 80
-    MAP_HEIGHT,     // 21
-    COLORS,         // { BLACK: 0, RED: 1, ..., WHITE: 15 }
-    ATTR,           // { NONE: 0, BOLD: 1, DIM: 2, ULINE: 4, BLINK: 5, INVERSE: 7 }
-    STATUS_FIELDS,  // ["title", "hp", "hpMax", ...]
-    CONDITIONS,     // ["stone", "blind", "conf", ...]
-    PHASE,          // { INIT: "init", CHAR_SELECT: "charSelect", PLAYING: "playing", GAME_OVER: "gameOver" }
-    INPUT_TYPE,     // { KEY: "key", YN: "yn", LINE: "line", MENU: "menu", ... }
-    MENU_MODE,      // { PICK_NONE, PICK_ONE, PICK_ANY }
+    // Action/input mappings
+    ACTION_KEYS,        // { search: ["s"], eat: ["e"], pickup: [","], ... }
+    EXTENDED_COMMANDS,  // Set { "pray", "loot", "dip", "enhance", ... }
+    DIRECTIONS,         // { n: "k", s: "j", e: "l", w: "h", ne: "u", ... }
+    KEY_CODES,          // { ESC: 27, SPACE: 32, ENTER: 13, TAB: 9 }
+
+    // Map
+    MAP_WIDTH,          // 80
+    MAP_HEIGHT,         // 21
+    FEATURE_NAMES,      // { "<": "staircase up", "{": "fountain or sink", ... }
+    ITEM_CATEGORY_BY_CHAR, // { ")": "weapon", "!": "potion", ... }
+    OBJ_CLASS_NAMES,    // { 2: "weapon", 7: "food", 11: "wand", ... }
+
+    // Display
+    COLORS,             // { BLACK: 0, RED: 1, ..., WHITE: 15 }
+    ATTR,               // { NONE: 0, BOLD: 1, DIM: 2, ULINE: 4, BLINK: 5, INVERSE: 7 }
+
+    // Enums
+    STATUS_FIELDS,      // ["title", "hp", "hpMax", ...]
+    CONDITIONS,         // ["stone", "blind", "conf", ...]
+    PHASE,              // { INIT: "init", CHAR_SELECT: "charSelect", PLAYING: "playing", GAME_OVER: "gameOver" }
+    INPUT_TYPE,         // { KEY: "key", YN: "yn", LINE: "line", MENU: "menu", ... }
+    MENU_MODE,          // { PICK_NONE, PICK_ONE, PICK_ANY }
 } from "@neth4ck/api";
 ```
 

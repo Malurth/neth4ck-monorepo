@@ -111,6 +111,22 @@ describe("@neth4ck/api exports", () => {
         expect(stateModule.OBJ_CLASS_NAMES[11]).toBe("wand");
         expect(stateModule.OBJ_CLASS_NAMES[12]).toBe("coin");
     });
+
+    it("exports ACTION_KEYS mapping action names to key sequences", () => {
+        expect(stateModule.ACTION_KEYS).toBeDefined();
+        expect(stateModule.ACTION_KEYS.search).toEqual(["s"]);
+        expect(stateModule.ACTION_KEYS.pickup).toEqual([","]);
+        expect(stateModule.ACTION_KEYS.eat).toEqual(["e"]);
+        expect(stateModule.ACTION_KEYS.kick).toEqual(["\x04"]);
+    });
+
+    it("exports EXTENDED_COMMANDS as a Set of command names", () => {
+        expect(stateModule.EXTENDED_COMMANDS).toBeInstanceOf(Set);
+        expect(stateModule.EXTENDED_COMMANDS.has("pray")).toBe(true);
+        expect(stateModule.EXTENDED_COMMANDS.has("loot")).toBe(true);
+        expect(stateModule.EXTENDED_COMMANDS.has("dip")).toBe(true);
+        expect(stateModule.EXTENDED_COMMANDS.has("search")).toBe(false);
+    });
 });
 
 // ---------------------------------------------------------------------------
@@ -261,6 +277,66 @@ describe("NethackStateManager construction", () => {
         game._ctx.pendingResolve = (val) => { resolved = val; };
         game.handleKey("j");
         expect(resolved).toBe("j".charCodeAt(0));
+    });
+
+    it("action() dispatches movement via move_* prefix", () => {
+        const game = new NethackStateManager();
+        let resolved = null;
+        game._ctx.state.pendingInput = { type: "key" };
+        game._ctx.pendingResolve = (val) => { resolved = val; };
+        game.action("move_e");
+        expect(resolved).toBe("l".charCodeAt(0)); // vi-key for east
+    });
+
+    it("action() dispatches mapped actions by name", () => {
+        const game = new NethackStateManager();
+        let resolved = null;
+        game._ctx.state.pendingInput = { type: "key" };
+        game._ctx.pendingResolve = (val) => { resolved = val; };
+        game.action("search");
+        expect(resolved).toBe("s".charCodeAt(0));
+    });
+
+    it("action() dispatches extended commands as #name\\n", () => {
+        const game = new NethackStateManager();
+        const keys = [];
+        // Capture each sendKey call by simulating repeated key prompts
+        game._ctx.state.pendingInput = { type: "key" };
+        game._ctx.pendingResolve = (val) => {
+            keys.push(val);
+            // Re-arm for next key in the sequence
+            game._ctx.state.pendingInput = { type: "key" };
+            game._ctx.pendingResolve = (v) => {
+                keys.push(v);
+                game._ctx.state.pendingInput = { type: "key" };
+                game._ctx.pendingResolve = (v2) => {
+                    keys.push(v2);
+                    game._ctx.state.pendingInput = { type: "key" };
+                    game._ctx.pendingResolve = (v3) => {
+                        keys.push(v3);
+                        game._ctx.state.pendingInput = { type: "key" };
+                        game._ctx.pendingResolve = (v4) => {
+                            keys.push(v4);
+                            game._ctx.state.pendingInput = { type: "key" };
+                            game._ctx.pendingResolve = (v5) => { keys.push(v5); };
+                        };
+                    };
+                };
+            };
+        };
+        game.action("dip");
+        const chars = keys.map((k) => String.fromCharCode(k));
+        expect(chars).toEqual(["#", "d", "i", "p", "\n"]);
+    });
+
+    it("action() falls back to handleKey for unknown actions", () => {
+        const game = new NethackStateManager();
+        let resolved = null;
+        game._ctx.state.pendingInput = { type: "yn", query: "test?" };
+        game._ctx.pendingResolve = (val) => { resolved = val; };
+        game.action("y");
+        // Should route through handleKey → answerYn
+        expect(resolved).toBe("y".charCodeAt(0));
     });
 
     it("throws on verb method when game is at wrong prompt type", () => {

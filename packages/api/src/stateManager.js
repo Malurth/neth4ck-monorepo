@@ -1,7 +1,7 @@
 import nethackStart from "@neth4ck/neth4ck";
 
 import { createCallbackRouter } from "./callbackRouter.js";
-import { DIRECTIONS } from "./constants.js";
+import { ACTION_KEYS, DIRECTIONS, EXTENDED_COMMANDS } from "./constants.js";
 import { EventEmitter } from "./eventEmitter.js";
 import { createRingBuffer } from "./ringBuffer.js";
 
@@ -315,6 +315,64 @@ export class NethackStateManager {
     off(event, fn) {
         this._emitter.off(event, fn);
         return this;
+    }
+
+    // ── High-level Actions ─────────────────────
+
+    /**
+     * Dispatch a named action. Handles:
+     *   - "verb:letter" (e.g. "eat:d") → verb method with item letter
+     *   - "move_n", "move_se", etc. → directional movement
+     *   - extended commands ("pray", "loot") → #name\n key sequence
+     *   - mapped actions ("search", "pickup") → raw key sequence
+     *   - fallback → treat as raw key via handleKey
+     *
+     * Fire-and-forget — does not return a promise. Listen for events
+     * (mapUpdate, inputRequired, etc.) to react to the result.
+     */
+    action(name) {
+        // "verb:letter" → call the verb method (eat, wield, etc.)
+        const colonIdx = name.indexOf(":");
+        if (colonIdx > 0) {
+            const verb = name.slice(0, colonIdx);
+            const letter = name.slice(colonIdx + 1);
+            if (typeof this[verb] === "function") {
+                this[verb](letter);
+                return;
+            }
+        }
+
+        // Directional movement (move_n, move_se, etc.)
+        if (name.startsWith("move_")) {
+            const dir = name.slice(5); // "move_ne" → "ne"
+            this.move(dir);
+            return;
+        }
+
+        // Extended command (#name\n)
+        if (EXTENDED_COMMANDS.has(name)) {
+            const keys = ["#", ...name.split(""), "\n"];
+            for (const key of keys) {
+                this.sendKey(key);
+            }
+            return;
+        }
+
+        // Mapped action → key sequence
+        const keys = ACTION_KEYS[name];
+        if (keys) {
+            if (keys.length === 1) {
+                this.handleKey(keys[0]);
+            } else {
+                for (const key of keys) {
+                    this.sendKey(key);
+                }
+            }
+            return;
+        }
+
+        // Fallback: treat as raw key
+        this.handleKey(name);
     }
 
     // ── Input Methods ────────────────────────

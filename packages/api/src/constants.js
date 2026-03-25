@@ -186,3 +186,29 @@ export const OBJ_CLASS_NAMES = {
     16: "chain",
     17: "venom",
 };
+
+/** Named action → raw NetHack key sequence */
+export const ACTION_KEYS = {
+    // Basic
+    wait: ["."], pickup: [","], go_down: [">"], go_up: ["<"],
+    more: [" "], search: ["s"], inventory: ["i"],
+    // Interaction
+    apply: ["a"], cast: ["Z"], close: ["c"], engrave: ["E"],
+    fire: ["f"], open: ["o"], kick: ["\x04"],
+    // Inventory verbs (names match stateManager verb methods)
+    eat: ["e"], drink: ["q"], read: ["r"], zap: ["z"],
+    wear: ["W"], wield: ["w"], putOn: ["P"], takeOff: ["T"],
+    drop: ["d"], throw: ["t"], quiver: ["Q"],
+    // Utility
+    swap: ["x"], look: [":"], autopickup: ["@"], call: ["C"],
+    pay: ["p"], remove: ["R"], twoweapon: ["X"],
+    takeoffall: ["A"], droptype: ["D"], fight: ["F"],
+    esc: ["\x1b"],
+};
+
+/** Extended commands available via #name\n */
+export const EXTENDED_COMMANDS = new Set([
+    "chat", "dip", "enhance", "force", "invoke", "jump", "monster",
+    "loot", "pray", "rub", "sit", "turn", "untrap", "wipe", "offer",
+    "ride", "tip",
+]);
