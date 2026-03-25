@@ -126,6 +126,14 @@ export class NethackStateManager {
         const startupDone = this._runStartupSequence(
             gameOptions?.name, { skipTutorial });
 
+        // Clear the asyncify reentry guard from any previous game session.
+        // Without this, a stale shimFunctionRunning value from a previous
+        // game's suspended callback triggers a false reentrancy warning.
+        const ng = globalThis.nethackGlobal;
+        if (ng) {
+            ng.shimFunctionRunning = null;
+        }
+
         // Start the game loop (non-blocking — Asyncify suspends on input).
         // _main() runs synchronously through init (which installs helpers via
         // js_helpers_init) before suspending at the first input prompt.
@@ -135,10 +143,12 @@ export class NethackStateManager {
         // runs js_constants_init to export struct pointers and offsets)
         this._buildMonsterRegistry();
 
-        // Refresh inventory on every input prompt — this is when the game is
-        // suspended and WASM memory is stable. Compares against the previous
-        // snapshot and only emits inventoryUpdate if something changed.
+        // Refresh inventory on every input prompt and map update — these are
+        // points when the game is suspended and WASM memory is stable.
+        // Compares against the previous snapshot and only emits
+        // inventoryUpdate if something changed.
         this.on("inputRequired", () => this._maybeRefreshInventory());
+        this.on("mapUpdate", () => this._maybeRefreshInventory());
 
         // Wait for the startup sequence to complete (charSelect → askname →
         // intro text → tutorial → first gameplay input).
