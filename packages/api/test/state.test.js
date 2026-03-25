@@ -557,6 +557,19 @@ describe.each([
             }
         });
 
+        it("has inventory items after start()", () => {
+            expect(result.inventoryCount).toBeGreaterThan(0);
+        });
+
+        it("inventory items have displayText from doname()", () => {
+            expect(result.inventorySample).toBeDefined();
+            expect(typeof result.inventorySample.displayText).toBe("string");
+            expect(result.inventorySample.displayText.length).toBeGreaterThan(0);
+            // displayText should be a real item description, not just a raw name
+            // e.g. "a +1 long sword" or "an uncursed food ration"
+            expect(result.inventorySample.displayText).not.toBe(result.inventorySample.name);
+        });
+
         it("populates final status fields", () => {
             expect(result.finalStatus).not.toBeNull();
             expect(typeof result.finalStatus.hp).toBe("number");

@@ -728,6 +728,11 @@ export class NethackStateManager {
         const { getValue, UTF8ToString } = this._module;
         const items = [];
 
+        // Use NetHack's doname() for canonical display text if available.
+        // doname(obj*) returns a char* with the fully formatted item description
+        // (e.g. "a +2 blessed rustproof long sword (weapon in hand)").
+        const hasDoname = typeof this._module._doname === "function";
+
         // inventPtr is &invent (pointer to a pointer) — dereference to get list head
         let cur = getValue(inventPtr, "*");
         while (cur) {
@@ -747,6 +752,13 @@ export class NethackStateManager {
             const name = namePtr ? UTF8ToString(namePtr) : null;
             const appearance = descrPtr ? UTF8ToString(descrPtr) : null;
 
+            // Get NetHack's canonical formatted description via doname()
+            let displayText = null;
+            if (hasDoname) {
+                const strPtr = this._module._doname(cur);
+                if (strPtr) displayText = UTF8ToString(strPtr);
+            }
+
             items.push({
                 letter: invlet,
                 name,
@@ -757,6 +769,7 @@ export class NethackStateManager {
                 enchantment: spe,
                 worn: owornmask !== 0,
                 wornMask: owornmask,
+                displayText,
             });
 
             cur = getValue(cur + obj.NOBJ, "*");

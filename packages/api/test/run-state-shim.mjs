@@ -195,6 +195,12 @@ async function main() {
             print: () => {},
             printErr: () => {},
         });
+        // Capture inventory snapshot after start (game is fully initialized)
+        const inv = game.inventory;
+        results.inventoryCount = inv.length;
+        if (inv.length > 0) {
+            results.inventorySample = { ...inv[0] };
+        }
     } catch (e) {
         results.error = `start() threw: ${e.message || e}`;
         outputAndExit();

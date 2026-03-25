@@ -253,6 +253,7 @@ game.inventory    // array of items currently carried
 game.inventory[0]
 // {
 //   letter: "a",                    — inventory slot
+//   displayText: "a +2 long sword (weapon in hand)", — NetHack's formatted description
 //   name: "long sword",             — actual object name
 //   appearance: "long sword",       — randomized description (when unidentified)
 //   oclass: 41,                     — object class code

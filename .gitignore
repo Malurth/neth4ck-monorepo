@@ -43,3 +43,6 @@ pnpm-debug.log*
 docs
 docs.json
 .nhairc.js
+
+# Claude Code
+CLAUDE.md
