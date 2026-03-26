@@ -551,15 +551,23 @@ export function createCallbackRouter(ctx) {
                 // poskey receives output pointers: [x_ptr, y_ptr, mod_ptr]
                 // When resolved with a number → key press (return the key code).
                 // When resolved with { x, y, mod } → position click
-                //   (write to the pointers and return 0).
-                const [xPtr, yPtr, modPtr] = args;
+                //   (write to global click buffer and return 0).
+                //
+                // NOTE: We write to global memory (poskey_click_*) rather than
+                // the stack-allocated out-pointers because Asyncify restores the
+                // C stack on resume, overwriting any values written to stack
+                // addresses during suspension. The C side copies from the globals
+                // to the out-pointers after nh_poskey returns.
                 return setInput({ type: "poskey" }).then((value) => {
                     if (typeof value === "object" && value !== null) {
                         const mod = ctx.module;
-                        if (mod?.setValue && xPtr && yPtr && modPtr) {
-                            mod.setValue(xPtr, value.x ?? 0, "i32");
-                            mod.setValue(yPtr, value.y ?? 0, "i32");
-                            mod.setValue(modPtr, value.mod ?? 0, "i32");
+                        if (mod?.setValue) {
+                            const xGlobal = mod._get_poskey_click_x_ptr();
+                            const yGlobal = mod._get_poskey_click_y_ptr();
+                            const modGlobal = mod._get_poskey_click_mod_ptr();
+                            mod.setValue(xGlobal, value.x ?? 0, "i32");
+                            mod.setValue(yGlobal, value.y ?? 0, "i32");
+                            mod.setValue(modGlobal, value.mod ?? 0, "i32");
                         }
                         return 0; // no key — position was sent
                     }

@@ -9,6 +9,7 @@ const DEFAULT_OPTIONS = {
     messageHistorySize: 200,
     mapCoordinateOrder: "yx",
     autoResolvePickNone: false,
+    autoDismissMenus: "",  //falsy = off, "dismiss" = dismiss only, "resend" = dismiss + resend input
 };
 
 export class NethackStateManager {
@@ -198,6 +199,47 @@ export class NethackStateManager {
         return this._ctx.state.cursor;
     }
 
+    /** Player's true map coordinates (unaffected by farlook/targeting): { x, y } */
+    get playerPos() {
+        const mod = this._ctx.module;
+        if (mod?._get_player_x && mod?._get_player_y) {
+            return { x: mod._get_player_x(), y: mod._get_player_y() };
+        }
+        // Fallback to cursor if WASM functions aren't available
+        return this._ctx.state.cursor;
+    }
+
+    /** Current input state from the C engine.
+     * 0 = otherInp, 1 = commandInp, 2 = getposInp, 3 = getdirInp.
+     * Use isPositionSelection for a convenient boolean check. */
+    get inputState() {
+        const mod = this._ctx.module;
+        if (mod?._get_input_state) {
+            return mod._get_input_state();
+        }
+        return 0;
+    }
+
+    /** Whether the game is currently in position selection mode
+     * (farlook, targeting, teleport destination, etc.). */
+    get isPositionSelection() {
+        return this.inputState === 2;
+    }
+
+    /**
+     * Get the clean screen description for a map position.
+     * Returns the unambiguous "firstmatch" description (e.g. "closed door",
+     * "a jackal", "a long sword") or an empty string if nothing is there.
+     * Synchronous — reads from WASM memory without triggering game prompts.
+     */
+    lookAt(x, y) {
+        const mod = this._ctx.module;
+        if (!mod?._get_screen_description) return "";
+        const ptr = mod._get_screen_description(x, y);
+        if (!ptr) return "";
+        return mod.UTF8ToString(ptr);
+    }
+
     /** Status bar fields */
     get status() {
         return this._ctx.state.status;
@@ -348,6 +390,23 @@ export class NethackStateManager {
      * (mapUpdate, inputRequired, etc.) to react to the result.
      */
     action(name) {
+        // If a menu is blocking, handle based on autoDismissMenus setting.
+        // PICK_ANY menus are never auto-dismissed (require real user choices).
+        if (this.pendingInputType === "menu") {
+            const mode = this.activeMenu?.selectionMode;
+            const dismiss = this._options.autoDismissMenus;
+            if (dismiss && mode !== 2 && mode !== "PICK_ANY") {
+                this.dismissMenu();
+                // "resend": re-dispatch the action once the game processes the dismiss
+                if (dismiss === "resend") {
+                    this.once("inputRequired", () => this.action(name));
+                }
+            } else {
+                this._emitter.emit("inputBlocked", { reason: "menu", action: name });
+            }
+            return;
+        }
+
         // "verb:letter" → call the verb method (eat, wield, etc.)
         const colonIdx = name.indexOf(":");
         if (colonIdx > 0) {
@@ -484,6 +543,19 @@ export class NethackStateManager {
         }
     }
 
+    /**
+     * If a menu is currently blocking, dismiss it. Returns true if a menu
+     * was dismissed, false otherwise. Useful for auto-clearing informational
+     * menus (tutorials, etc.) that shouldn't block gameplay input.
+     */
+    dismissIfMenu() {
+        if (this.pendingInputType === "menu") {
+            this.dismissMenu();
+            return true;
+        }
+        return false;
+    }
+
     sendKey(key) {
         const code = typeof key === "string" ? key.charCodeAt(0) : key;
         this._resolveInput(["key", "poskey"], code);
@@ -539,7 +611,22 @@ export class NethackStateManager {
         this._resolveInput(["charSelect"], value);
     }
 
-    sendPosition(x, y, mod = 0) {
+    sendPosition(x, y, mod = 1) {
+        // If a menu is blocking, handle based on autoDismissMenus setting.
+        // PICK_ANY menus are never auto-dismissed (require real user choices).
+        if (this.pendingInputType === "menu") {
+            const mode = this.activeMenu?.selectionMode;
+            const dismiss = this._options.autoDismissMenus;
+            if (dismiss && mode !== 2 && mode !== "PICK_ANY") {
+                this.dismissMenu();
+                if (dismiss === "resend") {
+                    this.once("inputRequired", () => this.sendPosition(x, y, mod));
+                }
+            } else {
+                this._emitter.emit("inputBlocked", { reason: "menu", x, y });
+            }
+            return;
+        }
         this._resolveInput(["poskey"], { x, y, mod });
     }
 

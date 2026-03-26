@@ -59,6 +59,7 @@ console.log(game.inventory);        // starting equipment
 |---|---|---|
 | `messageHistorySize` | `200` | Max messages to keep in the ring buffer |
 | `mapCoordinateOrder` | `"yx"` | `"yx"` for `map[y][x]`, `"xy"` for `map[x][y]` |
+| `autoDismissMenus` | `""` | Controls how `action()` and `sendPosition()` handle blocking `PICK_NONE`/`PICK_ONE` menus (e.g. tutorial popups). `"dismiss"`: auto-dismiss the menu, consume the input. `"resend"`: auto-dismiss, then resend the original input once the game is ready. Falsy (default): drop the input and emit an `inputBlocked` event. `PICK_ANY` menus are never auto-dismissed since they require real user choices. |
 
 ### `game.start(createModule, moduleOptions?)`
 
@@ -179,10 +180,18 @@ game.selectMenuItem(id);      // select a single item
 game.dismissMenu();           // close without selecting (ESC)
 ```
 
-#### Other
+#### Position & Look
 
 ```js
 game.sendPosition(x, y);         // send a map coordinate (for position prompts)
+game.lookAt(x, y);               // get the clean description of a map tile (synchronous)
+                                  // e.g. "closed door", "a jackal", "a long sword"
+                                  // Uses the same do_screen_description() as auto_describe
+```
+
+#### Other
+
+```js
 game.sendExtCmd(index);           // send an extended command by index
 game.resolveCharSelect(value);    // respond to character creation
 ```
@@ -195,7 +204,8 @@ All state is available as getters on the game instance. Values update automatica
 
 ```js
 game.map        // MapTile[][] — indexed as map[y][x] (default) or map[x][y]
-game.cursor     // { x, y } — player position on the map
+game.cursor     // { x, y } — cursor position on the map (follows farlook cursor)
+game.playerPos  // { x, y } — player's true position (unaffected by farlook/targeting)
 ```
 
 Each tile: `{ glyph, bkglyph, tileIndex, ch, color, special, x, y, tileType, tileLabel }`
@@ -327,6 +337,8 @@ game.pendingInput       // current input prompt object, or null
 game.pendingInputType   // shorthand for pendingInput?.type
 game.isWaitingForInput  // boolean
 game.activeMenu         // current open menu, or null
+game.isPositionSelection // true when the game is in getpos() — farlook, targeting, etc.
+game.inputState         // C engine input state: 0=other, 1=command, 2=getpos, 3=getdir
 ```
 
 ### Escape Hatches
@@ -361,6 +373,7 @@ game.off(event, callback);
 | `textWindow` | `(lines)` | Text window displayed (array of strings) |
 | `phaseChange` | `(phase)` | Game phase changed |
 | `gameOver` | `({ how, when })` | Game ended |
+| `inputBlocked` | `({ reason, ... })` | Input was dropped because a menu (or other prompt) is blocking. Only emitted when `autoDismissMenus` is `false`. |
 | `rawCallback` | `(name, args)` | Every WASM window-port callback (escape hatch for anything not covered above) |
 
 ## Exported Constants
