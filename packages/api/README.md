@@ -146,6 +146,10 @@ game.handleKey("y");  // route a keystroke based on current prompt type:
                       //   menu + ESC → dismissMenu
                       //   menu + letter → selectMenuItem
                       //   anything else → sendKey
+
+game.handleClick(x, y);  // route a map click — if in position selection
+                         // (farlook, targeting), sends the position;
+                         // otherwise moves toward the clicked tile
 ```
 
 ### Low-level Input

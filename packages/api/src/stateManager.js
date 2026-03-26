@@ -573,6 +573,28 @@ export class NethackStateManager {
         this.sendDirection(dir);
     }
 
+    /**
+     * Handle a map click at (x, y). If the game is in position selection
+     * mode (farlook, targeting, etc.), sends the position. Otherwise
+     * computes directional movement toward the clicked tile.
+     */
+    handleClick(x, y) {
+        if (this.isPositionSelection) {
+            this.sendPosition(x, y);
+        } else {
+            const pos = this.playerPos;
+            const dx = Math.sign(x - pos.x);
+            const dy = Math.sign(y - pos.y);
+            if (dx === 0 && dy === 0) return;
+            const dirMap = {
+                "0,-1": "n", "0,1": "s", "1,0": "e", "-1,0": "w",
+                "1,-1": "ne", "-1,-1": "nw", "1,1": "se", "-1,1": "sw",
+            };
+            const dir = dirMap[`${dx},${dy}`];
+            if (dir) this.move(dir);
+        }
+    }
+
     rest() {
         this.sendKey(".");
     }
