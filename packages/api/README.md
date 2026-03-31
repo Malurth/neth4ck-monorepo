@@ -366,6 +366,7 @@ game.off(event, callback);
 
 | Event | Callback Args | When |
 |---|---|---|
+| `actionTaken` | `(info)` | Player performed an action. `info.action` identifies it: `"move"` (+ `direction`, optionally `x`, `y`), `"eat"`/`"wield"`/etc. (+ `item`), `"farlook"` (+ `x`, `y`, `description`), `"search"`, `"pray"`, `"answer"` (+ `key`), `"menuSelect"` (+ `key`), `"menuDismiss"`, `"quit"`, or `"key"` (+ `key`) for raw keystrokes. |
 | `inputRequired` | `(prompt)` | Game needs player input. `prompt.type` is `"key"`, `"yn"`, `"line"`, `"menu"`, `"poskey"`, or `"extcmd"`. (Character creation prompts are handled internally by the startup sequence.) |
 | `mapUpdate` | `(map)` | Map tiles changed |
 | `statusChange` | `(status, changedFields)` | Status bar updated. `changedFields` lists which keys changed |

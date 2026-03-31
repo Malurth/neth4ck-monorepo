@@ -389,6 +389,10 @@ export class NethackStateManager {
      * Fire-and-forget — does not return a promise. Listen for events
      * (mapUpdate, inputRequired, etc.) to react to the result.
      */
+    _emitAction(info) {
+        this._emitter.emit("actionTaken", info);
+    }
+
     action(name) {
         // If a menu is blocking, handle based on autoDismissMenus setting.
         // PICK_ANY menus are never auto-dismissed (require real user choices).
@@ -413,6 +417,7 @@ export class NethackStateManager {
             const verb = name.slice(0, colonIdx);
             const letter = name.slice(colonIdx + 1);
             if (typeof this[verb] === "function") {
+                this._emitAction({ action: verb, item: letter });
                 this[verb](letter);
                 return;
             }
@@ -421,12 +426,14 @@ export class NethackStateManager {
         // Directional movement (move_n, move_se, etc.)
         if (name.startsWith("move_")) {
             const dir = name.slice(5); // "move_ne" → "ne"
+            this._emitAction({ action: "move", direction: dir });
             this.move(dir);
             return;
         }
 
         // Extended command (#name → extcmd index)
         if (EXTENDED_COMMANDS.has(name)) {
+            this._emitAction({ action: name });
             this.sendKey("#"); // triggers shim_get_ext_cmd prompt
             const idx = this._lookupExtCmdIndex(name);
             this.sendExtCmd(idx);
@@ -436,6 +443,7 @@ export class NethackStateManager {
         // Mapped action → key sequence
         const keys = ACTION_KEYS[name];
         if (keys) {
+            this._emitAction({ action: name });
             if (keys.length === 1) {
                 this.handleKey(keys[0]);
             } else {
@@ -447,6 +455,7 @@ export class NethackStateManager {
         }
 
         // Fallback: treat as raw key
+        this._emitAction({ action: "key", key: name });
         this.handleKey(name);
     }
 
@@ -459,6 +468,7 @@ export class NethackStateManager {
      * where quitting is possible.
      */
     quit() {
+        this._emitAction({ action: "quit" });
         if (this._ctx.inputInterceptor) {
             return Promise.reject(
                 new Error("another input sequence is already in progress")
@@ -530,15 +540,19 @@ export class NethackStateManager {
     handleKey(key) {
         const type = this.pendingInputType;
         if (type === "yn") {
+            this._emitAction({ action: "answer", key, promptType: "yn" });
             this.answerYn(key);
         } else if (type === "menu") {
             const code = typeof key === "string" ? key.charCodeAt(0) : key;
             if (code === 27) { // ESC
+                this._emitAction({ action: "menuDismiss" });
                 this.dismissMenu();
             } else {
+                this._emitAction({ action: "menuSelect", key });
                 this.selectMenuItem(key);
             }
         } else {
+            this._emitAction({ action: "key", key });
             this.sendKey(key);
         }
     }
@@ -580,6 +594,8 @@ export class NethackStateManager {
      */
     handleClick(x, y) {
         if (this.isPositionSelection) {
+            const description = this.lookAt(x, y);
+            this._emitAction({ action: "farlook", x, y, description });
             this.sendPosition(x, y);
         } else {
             const pos = this.playerPos;
@@ -591,7 +607,10 @@ export class NethackStateManager {
                 "1,-1": "ne", "-1,-1": "nw", "1,1": "se", "-1,1": "sw",
             };
             const dir = dirMap[`${dx},${dy}`];
-            if (dir) this.move(dir);
+            if (dir) {
+                this._emitAction({ action: "move", direction: dir, x, y });
+                this.move(dir);
+            }
         }
     }
 
