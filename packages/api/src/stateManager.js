@@ -134,18 +134,19 @@ export class NethackStateManager {
         const startupDone = this._runStartupSequence(
             gameOptions?.name, { skipTutorial });
 
-        // Clear the asyncify reentry guard from any previous game session.
-        // Without this, a stale shimFunctionRunning value from a previous
-        // game's suspended callback triggers a false reentrancy warning.
-        const ng = globalThis.nethackGlobal;
-        if (ng) {
-            ng.shimFunctionRunning = null;
-        }
+        // Reset nethackGlobal to prevent stale data from a previous game
+        // session. _main() will re-populate it via js_helpers_init,
+        // js_constants_init, and js_globals_init.
+        globalThis.nethackGlobal = {};
 
         // Start the game loop (non-blocking — Asyncify suspends on input).
         // _main() runs synchronously through init (which installs helpers via
         // js_helpers_init) before suspending at the first input prompt.
         this._module._main(0, 0);
+
+        // Capture this session's nethackGlobal on the context so all reads
+        // are scoped to this game instance, not the (overwritable) global.
+        this._ctx.ng = globalThis.nethackGlobal;
 
         // Build monster registry from WASM data (must be after _main, which
         // runs js_constants_init to export struct pointers and offsets)
@@ -337,26 +338,26 @@ export class NethackStateManager {
 
     /**
      * Game constants from the WASM module (colors, glyphs, attributes, etc.)
-     * Available after start() — mirrors globalThis.nethackGlobal.constants
+     * Available after start() — scoped to this game session.
      */
     get constants() {
-        return globalThis.nethackGlobal?.constants ?? null;
+        return this._ctx.ng?.constants ?? null;
     }
 
     /**
      * Game globals from the WASM module (window IDs, player name, flags)
-     * Available after start() — mirrors globalThis.nethackGlobal.globals
+     * Available after start() — scoped to this game session.
      */
     get globals() {
-        return globalThis.nethackGlobal?.globals ?? null;
+        return this._ctx.ng?.globals ?? null;
     }
 
     /**
      * Helper functions for glyph/tile mapping
-     * Available after start() — mirrors globalThis.nethackGlobal.helpers
+     * Available after start() — scoped to this game session.
      */
     get helpers() {
-        return globalThis.nethackGlobal?.helpers ?? null;
+        return this._ctx.ng?.helpers ?? null;
     }
 
     // ── Events ───────────────────────────────
@@ -394,6 +395,32 @@ export class NethackStateManager {
     }
 
     action(name) {
+        // If a yn prompt is active (e.g. "In what direction?", "Really attack?"),
+        // route single-key actions through handleKey so they answer the yn prompt.
+        // Multi-step actions (verbs, extended commands) can't be dispatched.
+        if (this.pendingInputType === "yn") {
+            // Directional movement → send direction char as yn answer
+            if (name.startsWith("move_")) {
+                const dir = name.slice(5);
+                const ch = DIRECTIONS[dir];
+                if (ch) {
+                    this._emitAction({ action: "move", direction: dir });
+                    this.handleKey(ch);
+                    return;
+                }
+            }
+            // Mapped single-key actions → send the key as yn answer
+            const keys = ACTION_KEYS[name];
+            if (keys && keys.length === 1) {
+                this._emitAction({ action: name });
+                this.handleKey(keys[0]);
+                return;
+            }
+            // Multi-step actions can't be dispatched during yn
+            this._emitter.emit("inputBlocked", { reason: "yn", action: name });
+            throw new Error("cannot dispatch action: yn prompt is active");
+        }
+
         // If a menu is blocking, handle based on autoDismissMenus setting.
         // PICK_ANY menus are never auto-dismissed (require real user choices).
         if (this.pendingInputType === "menu") {
@@ -434,9 +461,20 @@ export class NethackStateManager {
         // Extended command (#name → extcmd index)
         if (EXTENDED_COMMANDS.has(name)) {
             this._emitAction({ action: name });
-            this.sendKey("#"); // triggers shim_get_ext_cmd prompt
             const idx = this._lookupExtCmdIndex(name);
-            this.sendExtCmd(idx);
+            // Use an inputInterceptor to catch the extcmd prompt that
+            // fires asynchronously after sendKey("#") via Asyncify.
+            // Same pattern as quit() — sendExtCmd can't be called
+            // immediately because the prompt isn't set up yet.
+            this._ctx.inputInterceptor = (prompt) => {
+                this._ctx.inputInterceptor = null;
+                if (prompt.type === "extcmd") {
+                    this.sendExtCmd(idx);
+                    return true;
+                }
+                return false; // forward unexpected prompts to listeners
+            };
+            this.sendKey("#");
             return;
         }
 
@@ -593,6 +631,33 @@ export class NethackStateManager {
      * computes directional movement toward the clicked tile.
      */
     handleClick(x, y) {
+        // If a non-directional prompt is active, clicks can't be processed.
+        const inputType = this.pendingInputType;
+        if (inputType === "menu" || inputType === "line" || inputType === "extcmd") {
+            this._emitter.emit("inputBlocked", { reason: inputType, x, y });
+            return;
+        }
+        // If a yn prompt is active (e.g. "In what direction?"), compute
+        // direction and send as yn answer so kicks/loots etc. work via click.
+        if (inputType === "yn") {
+            const pos = this.playerPos;
+            const dx = Math.sign(x - pos.x);
+            const dy = Math.sign(y - pos.y);
+            if (dx === 0 && dy === 0) return;
+            const dirMap = {
+                "0,-1": "n", "0,1": "s", "1,0": "e", "-1,0": "w",
+                "1,-1": "ne", "-1,-1": "nw", "1,1": "se", "-1,1": "sw",
+            };
+            const dir = dirMap[`${dx},${dy}`];
+            if (dir) {
+                const ch = DIRECTIONS[dir];
+                if (ch) {
+                    this._emitAction({ action: "direction", direction: dir, x, y });
+                    this.answerYn(ch);
+                }
+            }
+            return;
+        }
         if (this.isPositionSelection) {
             const description = this.lookAt(x, y);
             this._emitAction({ action: "farlook", x, y, description });
@@ -854,7 +919,7 @@ export class NethackStateManager {
     }
 
     _buildMonsterRegistry() {
-        const ng = globalThis.nethackGlobal;
+        const ng = this._ctx.ng;
         const pm = ng?.constants?.PERMONST;
         const cs = ng?.constants?.CLASS_SYM;
         const monsPtr = ng?.pointers?.mons;
@@ -923,7 +988,7 @@ export class NethackStateManager {
      * Walks the invent linked list and snapshots each item.
      */
     refreshInventory() {
-        const ng = globalThis.nethackGlobal;
+        const ng = this._ctx.ng;
         const obj = ng?.constants?.OBJ;
         const oc = ng?.constants?.OBJCLASS;
         const od = ng?.constants?.OBJDESCR;

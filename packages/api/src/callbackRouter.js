@@ -107,6 +107,9 @@ export function createCallbackRouter(ctx) {
     const textBuffers = new Map();
     const changedFields = new Set();
     let mapDirty = false;
+
+    // Reset cached glyph ranges — they differ between 3.7 and 3.6.7
+    _sortedGlyphRanges = null;
     let prevConditions = new Set();
     let turnCounter = 0;
     // Persistent map of visible monsters by position. Updated incrementally
@@ -233,7 +236,7 @@ export function createCallbackRouter(ctx) {
                 let ch = 0;
                 let color = 0;
                 let special = 0;
-                const helpers = globalThis.nethackGlobal?.helpers;
+                const helpers = ctx.ng?.helpers;
 
                 if (helpers?.mapglyphHelper) {
                     // 3.6.7: glyphArg is a raw glyph int, use mapglyphHelper
@@ -255,7 +258,7 @@ export function createCallbackRouter(ctx) {
                 }
 
                 // Classify the foreground glyph
-                const glyphConstants = globalThis.nethackGlobal?.constants?.GLYPH;
+                const glyphConstants = ctx.ng?.constants?.GLYPH;
                 const tileType = classifyGlyph(glyph, glyphConstants);
                 let tileLabel = null;
                 if ((tileType === "statue" || tileType === "corpse") && glyphConstants) {
@@ -351,7 +354,7 @@ export function createCallbackRouter(ctx) {
                     const getLevlTyp = ctx.module?._get_levl_typ;
                     const getStairDir = ctx.module?._get_stair_direction;
                     const getFeatureColor = ctx.module?._get_feature_color;
-                    const levlTyp = globalThis.nethackGlobal?.constants?.LEVL_TYP;
+                    const levlTyp = ctx.ng?.constants?.LEVL_TYP;
                     if (getLevlTyp && levlTyp) {
                         for (const [posKey, monster] of monstersByPosition) {
                             if (featuresByPosition.has(posKey)) continue;
@@ -490,9 +493,21 @@ export function createCallbackRouter(ctx) {
                 }
                 const builder = menuBuilders.get(winId);
                 if (builder) {
+                    // 3.6.7 passes identifier as a pointer (format "p") — read
+                    // the value now while the stack is valid. All items in a loop
+                    // share the same &any address, so the pointer goes stale.
+                    // 3.7 passes identifier as an integer (format "i") — already
+                    // the value.
+                    let idValue = identifier;
+                    if (args.length < 9 && identifier) {
+                        const mod = ctx.module;
+                        if (mod?.getValue) {
+                            idValue = mod.getValue(identifier, "i32");
+                        }
+                    }
                     builder.items.push({
                         glyph,
-                        identifier,
+                        identifier: idValue,
                         accelerator: ch > 0 ? String.fromCharCode(ch) : "",
                         groupAccelerator: gch > 0 ? String.fromCharCode(gch) : "",
                         attr,
@@ -534,11 +549,48 @@ export function createCallbackRouter(ctx) {
                 state.activeMenu = menu;
                 emitter.emit("menuOpen", menu);
                 // WASM expects an integer return (count of selected items,
-                // or -1 for cancel). Transform the resolved value.
+                // or -1 for cancel). For selections (count > 0), we must
+                // also write a MENU_ITEM_P array to WASM heap memory and
+                // store its pointer in the global select_menu_pick_list.
+                // The C shim copies it to *menu_list after Asyncify resumes
+                // (same pattern as poskey click coordinates).
                 return setInput({ type: "menu", menu }).then(value => {
                     state.activeMenu = null;
                     if (value === null || value === undefined) return -1;
-                    if (Array.isArray(value)) return value.length;
+                    if (Array.isArray(value) && value.length > 0) {
+                        const mod = ctx.module;
+                        if (mod?._malloc && mod?.setValue && mod?._get_select_menu_pick_list_ptr) {
+                            // Map selected identifiers to menu items.
+                            // selectMenuItem passes accelerator chars; match on those.
+                            const selected = [];
+                            for (const sel of value) {
+                                const found = menu.items.find(
+                                    i => i.accelerator === sel || i.identifier === sel
+                                );
+                                if (found) selected.push(found);
+                            }
+                            if (selected.length > 0) {
+                                // Allocate MENU_ITEM_P array on WASM heap.
+                                // struct mi { anything item (8 bytes); long count (4); unsigned itemflags (4); } = 16 bytes
+                                const SIZEOF_MI = 16;
+                                const ptr = mod._malloc(SIZEOF_MI * selected.length);
+                                for (let i = 0; i < selected.length; i++) {
+                                    const offset = ptr + i * SIZEOF_MI;
+                                    // identifier was already read as a value during
+                                    // add_menu (not a pointer) — use it directly
+                                    mod.setValue(offset, selected[i].identifier, "i32"); // item.a_int
+                                    mod.setValue(offset + 4, 0, "i32");     // padding (rest of anything union)
+                                    mod.setValue(offset + 8, -1, "i32");    // count = -1 (all)
+                                    mod.setValue(offset + 12, 0, "i32");    // itemflags = 0
+                                }
+                                // Store pointer in global for C shim to copy
+                                const globalPtr = mod._get_select_menu_pick_list_ptr();
+                                mod.setValue(globalPtr, ptr, "*");
+                                return selected.length;
+                            }
+                        }
+                        return value.length;
+                    }
                     return 0;
                 });
             }
