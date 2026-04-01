@@ -72,6 +72,7 @@ export class NethackStateManager {
             visibleItems: [],
             visibleFeatures: [],
         };
+        this._pendingDirectionalAction = null;
     }
 
     // ── Lifecycle ────────────────────────────
@@ -382,7 +383,7 @@ export class NethackStateManager {
     /**
      * Dispatch a named action. Handles:
      *   - "verb:letter" (e.g. "eat:d") → verb method with item letter
-     *   - "move_n", "move_se", etc. → directional movement
+     *   - "move_north", "move_southeast", etc. → directional movement
      *   - extended commands ("pray", "loot") → #name\n key sequence
      *   - mapped actions ("search", "pickup") → raw key sequence
      *   - fallback → treat as raw key via handleKey
@@ -391,21 +392,47 @@ export class NethackStateManager {
      * (mapUpdate, inputRequired, etc.) to react to the result.
      */
     _emitAction(info) {
+        // Track non-trivial actions as potential directional parents.
+        // When a direction yn prompt follows, we merge the direction into
+        // the pending action to produce e.g. {action: "kick", direction: "w"}.
+        const trivial = new Set(["answer", "move", "key", "direction", "menuDismiss", "menuSelect"]);
+        if (!trivial.has(info.action)) {
+            this._pendingDirectionalAction = info;
+        }
         this._emitter.emit("actionTaken", info);
+    }
+
+    /**
+     * Whether the current yn prompt is a direction prompt (getdir).
+     * 3.7: C engine sets inputState = 3 (getdirInp).
+     * 3.6.7: falls back to regex on the yn query text.
+     */
+    _isDirectionPrompt() {
+        if (this.inputState === 3) return true;
+        const query = this.pendingInput?.query || "";
+        return /direction/i.test(query);
     }
 
     action(name) {
         // If a yn prompt is active (e.g. "In what direction?", "Really attack?"),
-        // route single-key actions through handleKey so they answer the yn prompt.
-        // Multi-step actions (verbs, extended commands) can't be dispatched.
+        // route single-key actions through answerYn. For direction prompts,
+        // merge with the pending action (e.g. kick + west → {action: "kick", direction: "w"}).
         if (this.pendingInputType === "yn") {
+            const isDir = this._isDirectionPrompt();
+            const pending = this._pendingDirectionalAction;
+
             // Directional movement → send direction char as yn answer
             if (name.startsWith("move_")) {
                 const dir = name.slice(5);
                 const ch = DIRECTIONS[dir];
                 if (ch) {
-                    this._emitAction({ action: "move", direction: dir });
-                    this.handleKey(ch);
+                    if (isDir && pending) {
+                        this._emitter.emit("actionTaken", { ...pending, direction: dir });
+                        this._pendingDirectionalAction = null;
+                    } else {
+                        this._emitAction({ action: "direction", direction: dir });
+                    }
+                    this.answerYn(ch);
                     return;
                 }
             }
@@ -413,7 +440,7 @@ export class NethackStateManager {
             const keys = ACTION_KEYS[name];
             if (keys && keys.length === 1) {
                 this._emitAction({ action: name });
-                this.handleKey(keys[0]);
+                this.answerYn(keys[0]);
                 return;
             }
             // Multi-step actions can't be dispatched during yn
@@ -438,21 +465,36 @@ export class NethackStateManager {
             return;
         }
 
-        // "verb:letter" → call the verb method (eat, wield, etc.)
+        // "action:direction" compound syntax — dispatch the action and
+        // auto-answer the direction yn prompt in one call.
+        // Must be checked before "verb:letter" to avoid misinterpreting
+        // direction names as inventory letters.
         const colonIdx = name.indexOf(":");
         if (colonIdx > 0) {
-            const verb = name.slice(0, colonIdx);
-            const letter = name.slice(colonIdx + 1);
-            if (typeof this[verb] === "function") {
-                this._emitAction({ action: verb, item: letter });
-                this[verb](letter);
+            const base = name.slice(0, colonIdx);
+            const suffix = name.slice(colonIdx + 1);
+
+            // "action:direction" compound syntax (kick:north, loot:southwest, etc.)
+            // Direction names are multi-char so they can't collide with
+            // single-letter inventory letters.
+            if (DIRECTIONS[suffix] !== undefined) {
+                this._emitAction({ action: base, direction: suffix });
+                this._pendingDirectionalAction = null;
+                this._dispatchDirectionalAction(base, suffix);
+                return;
+            }
+
+            // "verb:letter" → call the verb method (eat, wield, etc.)
+            if (typeof this[base] === "function") {
+                this._emitAction({ action: base, item: suffix });
+                this[base](suffix);
                 return;
             }
         }
 
-        // Directional movement (move_n, move_se, etc.)
+        // Directional movement (move_north, move_southeast, etc.)
         if (name.startsWith("move_")) {
-            const dir = name.slice(5); // "move_ne" → "ne"
+            const dir = name.slice(5); // "move_northeast" → "northeast"
             this._emitAction({ action: "move", direction: dir });
             this.move(dir);
             return;
@@ -567,17 +609,78 @@ export class NethackStateManager {
     // ── Input Methods ────────────────────────
 
     /**
+     * Dispatch a command that expects a direction prompt, auto-answering it.
+     * Works for both ACTION_KEYS commands (kick, open, close) and
+     * EXTENDED_COMMANDS (loot, untrap, chat).
+     */
+    _dispatchDirectionalAction(actionName, direction) {
+        const dirChar = DIRECTIONS[direction];
+        if (!dirChar) throw new Error(`unknown direction: ${direction}`);
+
+        // Interceptor that catches the direction yn prompt and auto-answers it.
+        const answerDirection = (prompt) => {
+            this._ctx.inputInterceptor = null;
+            if (prompt.type === "yn" && this._isDirectionPrompt()) {
+                this.answerYn(dirChar);
+                return true;
+            }
+            // Not a direction prompt (e.g. "Really attack?") — forward to listeners
+            return false;
+        };
+
+        if (EXTENDED_COMMANDS.has(actionName)) {
+            // Extended command: send "#", intercept extcmd prompt, THEN intercept direction
+            const idx = this._lookupExtCmdIndex(actionName);
+            this._ctx.inputInterceptor = (prompt) => {
+                if (prompt.type === "extcmd") {
+                    // Chain: now install the direction interceptor
+                    this._ctx.inputInterceptor = answerDirection;
+                    this.sendExtCmd(idx);
+                    return true;
+                }
+                return false;
+            };
+            this.sendKey("#");
+        } else {
+            // Mapped action key: send the key(s), then intercept direction
+            const keys = ACTION_KEYS[actionName];
+            if (!keys) throw new Error(`unknown directional action: ${actionName}`);
+            this._ctx.inputInterceptor = answerDirection;
+            for (const key of keys) {
+                this.sendKey(key);
+            }
+        }
+    }
+
+    /**
      * Route a keystroke to the correct input handler based on the current
      * prompt type. Convenience method so frontends don't need to inspect
      * pendingInputType and branch themselves.
      *
-     * - yn prompt → answerYn
+     * - yn prompt → answerYn (merges with pending directional action if applicable)
      * - menu prompt + ESC → dismissMenu; otherwise selectMenuItem
      * - key/poskey/anything else → sendKey
      */
     handleKey(key) {
         const type = this.pendingInputType;
         if (type === "yn") {
+            // Check for directional merge: if a kick/loot/etc. is pending
+            // and this yn is a direction prompt, emit the combined event.
+            if (this._pendingDirectionalAction && this._isDirectionPrompt()) {
+                const code = typeof key === "string" ? key.charCodeAt(0) : key;
+                const dirEntry = Object.entries(DIRECTIONS).find(
+                    ([, ch]) => ch.charCodeAt(0) === code
+                );
+                if (dirEntry) {
+                    const [dir] = dirEntry;
+                    this._emitter.emit("actionTaken", {
+                        ...this._pendingDirectionalAction, direction: dir,
+                    });
+                    this._pendingDirectionalAction = null;
+                    this.answerYn(key);
+                    return;
+                }
+            }
             this._emitAction({ action: "answer", key, promptType: "yn" });
             this.answerYn(key);
         } else if (type === "menu") {
@@ -640,19 +743,26 @@ export class NethackStateManager {
         // If a yn prompt is active (e.g. "In what direction?"), compute
         // direction and send as yn answer so kicks/loots etc. work via click.
         if (inputType === "yn") {
+            if (!this._isDirectionPrompt()) return; // ignore clicks for non-direction yn
             const pos = this.playerPos;
             const dx = Math.sign(x - pos.x);
             const dy = Math.sign(y - pos.y);
             if (dx === 0 && dy === 0) return;
             const dirMap = {
-                "0,-1": "n", "0,1": "s", "1,0": "e", "-1,0": "w",
-                "1,-1": "ne", "-1,-1": "nw", "1,1": "se", "-1,1": "sw",
+                "0,-1": "north", "0,1": "south", "1,0": "east", "-1,0": "west",
+                "1,-1": "northeast", "-1,-1": "northwest", "1,1": "southeast", "-1,1": "southwest",
             };
             const dir = dirMap[`${dx},${dy}`];
             if (dir) {
                 const ch = DIRECTIONS[dir];
                 if (ch) {
-                    this._emitAction({ action: "direction", direction: dir, x, y });
+                    const pending = this._pendingDirectionalAction;
+                    if (pending) {
+                        this._emitter.emit("actionTaken", { ...pending, direction: dir, x, y });
+                        this._pendingDirectionalAction = null;
+                    } else {
+                        this._emitAction({ action: "direction", direction: dir, x, y });
+                    }
                     this.answerYn(ch);
                 }
             }
@@ -668,8 +778,8 @@ export class NethackStateManager {
             const dy = Math.sign(y - pos.y);
             if (dx === 0 && dy === 0) return;
             const dirMap = {
-                "0,-1": "n", "0,1": "s", "1,0": "e", "-1,0": "w",
-                "1,-1": "ne", "-1,-1": "nw", "1,1": "se", "-1,1": "sw",
+                "0,-1": "north", "0,1": "south", "1,0": "east", "-1,0": "west",
+                "1,-1": "northeast", "-1,-1": "northwest", "1,1": "southeast", "-1,1": "southwest",
             };
             const dir = dirMap[`${dx},${dy}`];
             if (dir) {
@@ -765,29 +875,58 @@ export class NethackStateManager {
         }
         this.sendKey(verbKey);
         return new Promise((resolve) => {
+            let rejected = false;
+
             const done = () => {
                 this._ctx.inputInterceptor = null;
                 this._emitter.off("mapUpdate", mapHandler);
-                resolve();
+                this._emitter.off("message", messageHandler);
+                // Refresh inventory after WASM processes the action.
+                // The interceptor consumed the prompt so inputRequired won't
+                // fire to trigger the usual refresh. We listen for the NEXT
+                // inputRequired (when WASM suspends after processing) to
+                // ensure memory is stable before reading.
+                this.once("inputRequired", () => {
+                    this._maybeRefreshInventory();
+                    resolve(undefined);
+                });
             };
+
+            // If NetHack rejects the verb entirely (e.g. "Not wearing any
+            // accessories or armor."), a message fires before the next input
+            // prompt. Mark as rejected so we clean up instead of sending the
+            // item letter to an unrelated prompt.
+            const messageHandler = () => {
+                rejected = true;
+            };
+            this._emitter.on("message", messageHandler);
 
             this._ctx.inputInterceptor = (prompt) => {
                 if (prompt.type === "key" || prompt.type === "poskey") {
+                    if (rejected) {
+                        // Verb was rejected — back at normal gameplay.
+                        // Clean up without sending the item letter.
+                        done();
+                        return false;
+                    }
                     // Item selection prompt (nhgetch) — send the letter.
-                    done();
+                    // sendKey executes the action synchronously via Asyncify,
+                    // so done() (which refreshes inventory) must come after.
                     this.sendKey(itemLetter);
+                    done();
                     return true;
                 }
                 if (prompt.type === "yn") {
                     // NetHack uses yn_function for item selection when few
                     // items match (e.g. "What do you want to eat? [gh or ?*]").
                     // Check both resp choices and the bracketed query text.
+                    // [*] means "accepts any inventory letter".
                     const choices = prompt.choices || "";
                     const queryMatch = (prompt.query || "").match(/\[([^\]]+)\]/);
                     const allChoices = choices + (queryMatch ? queryMatch[1] : "");
-                    if (allChoices.includes(itemLetter)) {
-                        done();
+                    if (allChoices.includes("*") || allChoices.includes(itemLetter)) {
                         this.answerYn(itemLetter);
+                        done();
                         return true;
                     }
                 }
@@ -811,7 +950,7 @@ export class NethackStateManager {
     read(itemLetter) { return this._sendVerbThenItem("r", itemLetter); }
     wear(itemLetter) { return this._sendVerbThenItem("W", itemLetter); }
     wield(itemLetter) { return this._sendVerbThenItem("w", itemLetter); }
-    takeOff(itemLetter) { return this._sendVerbThenItem("T", itemLetter); }
+    takeOff(itemLetter) { return this._sendVerbThenItem("R", itemLetter); }
     putOn(itemLetter) { return this._sendVerbThenItem("P", itemLetter); }
     drop(itemLetter) { return this._sendVerbThenItem("d", itemLetter); }
     throw(itemLetter) { return this._sendVerbThenItem("t", itemLetter); }

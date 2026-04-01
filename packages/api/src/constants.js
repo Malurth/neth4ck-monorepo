@@ -2,16 +2,17 @@ export const MAP_WIDTH = 80;
 export const MAP_HEIGHT = 21;
 
 export const DIRECTIONS = {
-    n: "k",
-    s: "j",
-    e: "l",
-    w: "h",
-    ne: "u",
-    nw: "y",
-    se: "n",
-    sw: "b",
+    north: "k",
+    south: "j",
+    east: "l",
+    west: "h",
+    northeast: "u",
+    northwest: "y",
+    southeast: "n",
+    southwest: "b",
     up: "<",
     down: ">",
+    self: ".",
 };
 
 export const KEY_CODES = {
