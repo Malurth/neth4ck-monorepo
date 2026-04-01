@@ -157,7 +157,10 @@ export class NethackStateManager {
         // points when the game is suspended and WASM memory is stable.
         // Compares against the previous snapshot and only emits
         // inventoryUpdate if something changed.
-        this.on("inputRequired", () => this._maybeRefreshInventory());
+        this.on("inputRequired", () => {
+            this._maybeRefreshInventory();
+            this._refreshGivenNames();
+        });
         this.on("mapUpdate", () => this._maybeRefreshInventory());
 
         // Wait for the startup sequence to complete (charSelect → askname →
@@ -683,6 +686,16 @@ export class NethackStateManager {
             }
             this._emitAction({ action: "answer", key, promptType: "yn" });
             this.answerYn(key);
+        } else if (type === "line") {
+            // Line input (naming monsters, engraving text, etc.)
+            // Single keystrokes can't answer a line prompt — ESC cancels,
+            // anything else is ignored. Use answerLine(text) instead.
+            const code = typeof key === "string" ? key.charCodeAt(0) : key;
+            if (code === 27) { // ESC
+                this._emitAction({ action: "lineDismiss" });
+                this.answerLine("");
+            }
+            // Other keys silently ignored — frontend should show a text input
         } else if (type === "menu") {
             const code = typeof key === "string" ? key.charCodeAt(0) : key;
             if (code === 27) { // ESC
@@ -1107,6 +1120,18 @@ export class NethackStateManager {
         }
         Object.freeze(registry);
         this._ctx.state.monsters = registry;
+    }
+
+    _refreshGivenNames() {
+        const getGivenName = this._module?._get_monster_givenname;
+        if (!getGivenName || !this._module?.UTF8ToString) return;
+        for (const mon of this._ctx.state.visibleMonsters) {
+            const ptr = getGivenName(mon.x, mon.y);
+            if (ptr) {
+                const gname = this._module.UTF8ToString(ptr);
+                mon.givenName = gname || undefined;
+            }
+        }
     }
 
     _maybeRefreshInventory() {

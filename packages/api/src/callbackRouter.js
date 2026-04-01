@@ -650,8 +650,17 @@ export function createCallbackRouter(ctx) {
                 });
             }
 
-            case "shim_getlin":
-                return setInput({ type: "line", query: args[0] });
+            case "shim_getlin": {
+                const [query, bufp] = args;
+                return setInput({ type: "line", query }).then((text) => {
+                    // Write the response into the C buffer (bufp) so the
+                    // game receives it after Asyncify resumes.
+                    const str = typeof text === "string" ? text : "";
+                    if (bufp && ctx.module?.stringToUTF8) {
+                        ctx.module.stringToUTF8(str, bufp, 256);
+                    }
+                });
+            }
 
             case "shim_get_ext_cmd":
                 return setInput({ type: "extcmd" });
