@@ -396,6 +396,19 @@ export function createCallbackRouter(ctx) {
                     }
 
                     state.visibleMonsters = Array.from(monstersByPosition.values());
+
+                    // Enrich monsters with given names (pet names, #named monsters)
+                    const getGivenName = ctx.module?._get_monster_givenname;
+                    if (getGivenName && ctx.module?.UTF8ToString) {
+                        for (const mon of state.visibleMonsters) {
+                            const ptr = getGivenName(mon.x, mon.y);
+                            if (ptr) {
+                                const gname = ctx.module.UTF8ToString(ptr);
+                                if (gname) mon.givenName = gname;
+                            }
+                        }
+                    }
+
                     state.visibleItems = Array.from(itemsByPosition.values());
                     state.visibleFeatures = Array.from(featuresByPosition.values());
                     emitter.emit("mapUpdate", state.map);
