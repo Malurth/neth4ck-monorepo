@@ -73,12 +73,13 @@ export class NethackStateManager {
             visibleFeatures: [],
         };
         this._pendingDirectionalAction = null;
+        this._savesMounted = false;
     }
 
     // ── Lifecycle ────────────────────────────
 
     async start(createModule, moduleOptions = {}) {
-        const { nethackOptions, ...rest } = moduleOptions;
+        const { nethackOptions, saves, saveDir, ...rest } = moduleOptions;
 
         // Separate API-level options, birth options, game options, and
         // general NETHACKOPTIONS entries.
@@ -135,6 +136,14 @@ export class NethackStateManager {
         const startupDone = this._runStartupSequence(
             gameOptions?.name, { skipTutorial });
 
+        // ── Save filesystem setup ──
+        // Must happen AFTER module init (FS available) but BEFORE _main
+        // (game reads saves during startup). Properly awaits IDBFS sync.
+        const saveMode = saves ?? "none";
+        if (saveMode !== "none") {
+            await this._setupSaveFilesystem(saveMode, saveDir || "/save");
+        }
+
         // Reset nethackGlobal to prevent stale data from a previous game
         // session. _main() will re-populate it via js_helpers_init,
         // js_constants_init, and js_globals_init.
@@ -162,6 +171,14 @@ export class NethackStateManager {
             this._refreshGivenNames();
         });
         this.on("mapUpdate", () => this._maybeRefreshInventory());
+
+        // Auto-persist saves to IndexedDB when the game ends
+        this.on("phaseChange", (phase) => {
+            if (phase === "gameOver" && this._savesMounted) {
+                this.syncSaves().catch((e) =>
+                    console.warn("[saves] sync on exit failed:", e));
+            }
+        });
 
         // Wait for the startup sequence to complete (charSelect → askname →
         // intro text → tutorial → first gameplay input).
@@ -527,12 +544,8 @@ export class NethackStateManager {
         const keys = ACTION_KEYS[name];
         if (keys) {
             this._emitAction({ action: name });
-            if (keys.length === 1) {
-                this.handleKey(keys[0]);
-            } else {
-                for (const key of keys) {
-                    this.sendKey(key);
-                }
+            for (const key of keys) {
+                this.sendKey(key);
             }
             return;
         }
@@ -607,6 +620,60 @@ export class NethackStateManager {
         this._emitter.emit("phaseChange", "gameOver");
 
         return Promise.resolve();
+    }
+
+    // ── Save Management ─────────────────────
+
+    /**
+     * Mount IDBFS at the given path and sync from IndexedDB.
+     * If mode is 'clear', deletes all save files and syncs the deletion.
+     * Skips silently if IDBFS is not available (Node.js tests).
+     */
+    async _setupSaveFilesystem(mode, dir) {
+        const mod = this._module;
+        const FS = mod?.FS;
+        const IDBFS = FS?.filesystems?.IDBFS ?? mod?.IDBFS;
+
+        if (!FS || !IDBFS) {
+            console.warn("[saves] IDBFS not available, saves will not persist");
+            return;
+        }
+
+        try { FS.mkdir(dir); } catch { /* already exists */ }
+        FS.mount(IDBFS, {}, dir);
+
+        // Populate from IndexedDB → memory FS (await completion)
+        await new Promise((resolve, reject) => {
+            FS.syncfs(true, (err) => err ? reject(err) : resolve(undefined));
+        });
+
+        if (mode === "clear") {
+            const files = FS.readdir(dir).filter((f) => f !== "." && f !== "..");
+            for (const file of files) {
+                try { FS.unlink(`${dir}/${file}`); } catch { /* ignore */ }
+            }
+            // Persist deletion back to IndexedDB
+            await new Promise((resolve, reject) => {
+                FS.syncfs(false, (err) => err ? reject(err) : resolve(undefined));
+            });
+        }
+
+        this._savesMounted = true;
+        this._saveDir = dir;
+    }
+
+    /**
+     * Persist save files from memory FS to IndexedDB.
+     * Call after game save/quit to ensure saves survive page reloads.
+     */
+    async syncSaves() {
+        if (!this._savesMounted) return;
+        const FS = this._module?.FS;
+        if (!FS) return;
+        await new Promise((resolve, reject) => {
+            FS.syncfs(false, (err) => err ? reject(err) : resolve(undefined));
+        });
+        this._emitter.emit("savesSynced");
     }
 
     // ── Input Methods ────────────────────────
@@ -894,15 +961,7 @@ export class NethackStateManager {
                 this._ctx.inputInterceptor = null;
                 this._emitter.off("mapUpdate", mapHandler);
                 this._emitter.off("message", messageHandler);
-                // Refresh inventory after WASM processes the action.
-                // The interceptor consumed the prompt so inputRequired won't
-                // fire to trigger the usual refresh. We listen for the NEXT
-                // inputRequired (when WASM suspends after processing) to
-                // ensure memory is stable before reading.
-                this.once("inputRequired", () => {
-                    this._maybeRefreshInventory();
-                    resolve(undefined);
-                });
+                resolve(undefined);
             };
 
             // If NetHack rejects the verb entirely (e.g. "Not wearing any
@@ -1138,11 +1197,12 @@ export class NethackStateManager {
         const prev = this._ctx.state.inventory;
         this.refreshInventory();
         const curr = this._ctx.state.inventory;
-        // Quick change detection: different length, or any letter/otyp/quan mismatch
+        // Change detection: length, letter/otyp/quantity, or worn state
         if (prev.length !== curr.length
             || prev.some((p, i) => p.letter !== curr[i].letter
                 || p.otyp !== curr[i].otyp
-                || p.quantity !== curr[i].quantity)) {
+                || p.quantity !== curr[i].quantity
+                || p.wornMask !== curr[i].wornMask)) {
             this._emitter.emit("inventoryUpdate", curr);
         }
     }
