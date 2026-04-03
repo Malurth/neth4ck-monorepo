@@ -366,7 +366,7 @@ game.off(event, callback);
 
 | Event | Callback Args | When |
 |---|---|---|
-| `actionTaken` | `(info)` | Player performed an action. `info.action` identifies it: `"move"` (+ `direction`, optionally `x`, `y`), `"eat"`/`"wield"`/etc. (+ `item`), `"farlook"` (+ `x`, `y`, `description`), `"search"`, `"pray"`, `"answer"` (+ `key`), `"menuSelect"` (+ `key`), `"menuDismiss"`, `"quit"`, or `"key"` (+ `key`) for raw keystrokes. |
+| `actionTaken` | `(info)` | Player performed an action. `info.action` identifies it: `"move"` (+ `direction`, optionally `x`, `y`), `"eat"`/`"wield"`/etc. (+ `item`), `"farlook"` (+ `x`, `y`, `description`), `"search"`, `"pray"`, `"answer"` (+ `key`, `promptType`, `promptQuery`), `"menuSelect"` (+ `key`, `promptQuery`), `"menuDismiss"` (+ `promptQuery`), `"lineAnswer"` (+ `key`, `promptQuery`), `"lineDismiss"` (+ `promptQuery`), `"quit"`, or `"key"` (+ `key`) for raw keystrokes. Prompt-response actions (`answer`, `menuSelect`, `menuDismiss`, `lineAnswer`, `lineDismiss`) include `promptQuery` — the text of the prompt being answered. When `key` matches an inventory item, `itemName` is also included with the resolved display text (e.g. `"an uncursed scroll of blank paper"`). |
 | `inputRequired` | `(prompt)` | Game needs player input. `prompt.type` is `"key"`, `"yn"`, `"line"`, `"menu"`, `"poskey"`, or `"extcmd"`. (Character creation prompts are handled internally by the startup sequence.) |
 | `mapUpdate` | `(map)` | Map tiles changed |
 | `statusChange` | `(status, changedFields)` | Status bar updated. `changedFields` lists which keys changed |

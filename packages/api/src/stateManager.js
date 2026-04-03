@@ -411,6 +411,21 @@ export class NethackStateManager {
      * Fire-and-forget — does not return a promise. Listen for events
      * (mapUpdate, inputRequired, etc.) to react to the result.
      */
+    /**
+     * If `key` is a single letter matching an inventory item, return its
+     * display text (e.g. "an uncursed scroll of blank paper"). Otherwise null.
+     */
+    _resolveItemName(key) {
+        if (typeof key !== "string" || key.length !== 1) return null;
+        const item = this._ctx.state.inventory.find(i => i.letter === key);
+        if (!item) return null;
+        let name = item.displayText ?? item.name;
+        if (name && item.quantity > 1) {
+            name = name.replace(/^\d+\s+/, "");
+        }
+        return name || null;
+    }
+
     _emitAction(info) {
         // Track non-trivial actions as potential directional parents.
         // When a direction yn prompt follows, we merge the direction into
@@ -450,7 +465,7 @@ export class NethackStateManager {
                         this._emitter.emit("actionTaken", { ...pending, direction: dir });
                         this._pendingDirectionalAction = null;
                     } else {
-                        this._emitAction({ action: "direction", direction: dir });
+                        this._emitAction({ action: "direction", direction: dir, promptQuery: this._ctx.state.pendingInput?.query || "" });
                     }
                     this.answerYn(ch);
                     return;
@@ -459,7 +474,7 @@ export class NethackStateManager {
             // Mapped single-key actions → send the key as yn answer
             const keys = ACTION_KEYS[name];
             if (keys && keys.length === 1) {
-                this._emitAction({ action: name });
+                this._emitAction({ action: name, promptQuery: this._ctx.state.pendingInput?.query || "" });
                 this.answerYn(keys[0]);
                 return;
             }
@@ -751,7 +766,7 @@ export class NethackStateManager {
                     return;
                 }
             }
-            this._emitAction({ action: "answer", key, promptType: "yn" });
+            this._emitAction({ action: "answer", key, promptType: "yn", promptQuery: this._ctx.state.pendingInput?.query || "", itemName: this._resolveItemName(key) });
             this.answerYn(key);
         } else if (type === "line") {
             // Line input (naming monsters, engraving text, etc.)
@@ -759,17 +774,16 @@ export class NethackStateManager {
             // anything else is ignored. Use answerLine(text) instead.
             const code = typeof key === "string" ? key.charCodeAt(0) : key;
             if (code === 27) { // ESC
-                this._emitAction({ action: "lineDismiss" });
                 this.answerLine("");
             }
             // Other keys silently ignored — frontend should show a text input
         } else if (type === "menu") {
             const code = typeof key === "string" ? key.charCodeAt(0) : key;
             if (code === 27) { // ESC
-                this._emitAction({ action: "menuDismiss" });
+                this._emitAction({ action: "menuDismiss", promptQuery: this._ctx.state.activeMenu?.prompt || this._ctx.state.pendingInput?.query || "" });
                 this.dismissMenu();
             } else {
-                this._emitAction({ action: "menuSelect", key });
+                this._emitAction({ action: "menuSelect", key, promptQuery: this._ctx.state.activeMenu?.prompt || this._ctx.state.pendingInput?.query || "", itemName: this._resolveItemName(key) });
                 this.selectMenuItem(key);
             }
         } else {
@@ -883,6 +897,8 @@ export class NethackStateManager {
     }
 
     answerLine(text) {
+        const actionName = text ? "lineAnswer" : "lineDismiss";
+        this._emitAction({ action: actionName, key: text, promptQuery: this._ctx.state.pendingInput?.query || "" });
         this._resolveInput(["line"], text);
     }
 
