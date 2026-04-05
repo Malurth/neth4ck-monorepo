@@ -383,6 +383,48 @@ export class NethackStateManager {
     }
 
     /**
+     * Query the vision state at map position (x, y).
+     * Returns a bitmask: COULD_SEE=0x1, IN_SIGHT=0x2, TEMP_LIT=0x4.
+     * - COULD_SEE: has line-of-sight (even if dark)
+     * - IN_SIGHT: actually visible (lit + LOS)
+     * - TEMP_LIT: temporarily illuminated by a light source
+     * Returns 0 for out-of-bounds or if the function is unavailable.
+     */
+    getVisionAt(x, y) {
+        const fn = this._ctx.module?._get_vision_at;
+        return fn ? fn(x, y) : 0;
+    }
+
+    /**
+     * Query whether the tile at (x, y) is in a lit room.
+     * Returns 1 (lit), 0 (dark), or -1 (out-of-bounds/unseen).
+     */
+    getLevelLit(x, y) {
+        const fn = this._ctx.module?._get_levl_lit;
+        return fn ? fn(x, y) : -1;
+    }
+
+    /**
+     * Query the room number at (x, y).
+     * Returns 0-63 for room IDs, or -1 for out-of-bounds/unseen.
+     * Corridors and unassigned areas typically return 0.
+     */
+    getLevelRoomNo(x, y) {
+        const fn = this._ctx.module?._get_levl_roomno;
+        return fn ? fn(x, y) : -1;
+    }
+
+    /**
+     * Query the terrain type at (x, y) from levl[x][y].typ.
+     * Returns the LEVL_TYP enum value, or -1 for unseen/out-of-bounds.
+     * Use state.constants.LEVL_TYP to map values to names.
+     */
+    getLevelTyp(x, y) {
+        const fn = this._ctx.module?._get_levl_typ;
+        return fn ? fn(x, y) : -1;
+    }
+
+    /**
      * Current inventory items, read from WASM memory. Auto-refreshes on input prompts.
      * Each entry: { letter, name, appearance, oclass, otyp, quantity, enchantment, worn, wornMask }
      */

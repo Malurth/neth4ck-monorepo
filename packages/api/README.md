@@ -332,6 +332,34 @@ game.visibleFeatures
 //   the staircase at spawn is reported with correct name, direction, and color.
 ```
 
+### Vision & Terrain Queries
+
+Direct queries into the WASM engine's dungeon and vision data — useful for AI narration, accessibility, or any frontend that needs spatial awareness beyond the glyph map.
+
+```js
+// Vision state at a map position (bitmask)
+game.getVisionAt(x, y)
+// Returns: COULD_SEE (0x1) | IN_SIGHT (0x2) | TEMP_LIT (0x4)
+//   COULD_SEE: has line-of-sight (even if dark)
+//   IN_SIGHT:  actually visible (lit + LOS)
+//   TEMP_LIT:  temporarily illuminated by a light source
+// Returns 0 for out-of-bounds.
+
+// Lighting
+game.getLevelLit(x, y)    // 1 = lit room, 0 = dark, -1 = unseen/OOB
+
+// Room number (from levl[x][y].roomno)
+game.getLevelRoomNo(x, y) // 0-63 room ID, -1 = unseen/OOB
+
+// Terrain type (from levl[x][y].typ)
+game.getLevelTyp(x, y)    // enum value, -1 = unseen/OOB
+                          // e.g. ROOM=25, CORR=24, DOOR=23 (3.7)
+                          //      ROOM=24, CORR=23, DOOR=22 (3.6.7)
+
+// Human-readable tile description (synchronous)
+game.lookAt(x, y)         // e.g. "floor of a room", "an open door", "a fountain"
+```
+
 ### Startup Text
 
 Available after `start()` resolves:
