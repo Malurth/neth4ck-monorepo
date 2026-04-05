@@ -90,29 +90,18 @@ await game.start(createModule, {
   - `name`, `role`, `race`, `gender`, `align` — character creation
   - `skipTutorial` (default `true`) — auto-dismiss 3.7's tutorial prompt
   - `options` — array of NETHACKOPTIONS strings (e.g. `["color", "showexp", "number_pad:0"]`). These are appended to the `NETHACKOPTIONS` env var before the game starts.
+- **saves** — save file persistence mode:
+  - `"none"` (default) — no IDBFS mount, saves don't persist across page reloads
+  - `"clear"` — mount IDBFS, delete any existing saves, then start fresh
+  - Any other truthy value (e.g. `"load"`) — mount IDBFS and load existing saves for restore
+- **saveDir** — IDBFS mount path (default `"/save"`). Each unique path gets its own IndexedDB database, so use different paths for different save slots or versions (e.g. `"/save-37-slot1"`). The API creates a symlink from `/save` (where NetHack writes) to this path.
 - All other properties are forwarded to the Emscripten Module config
 
-The startup sequence (character selection, name entry, intro text, tutorial) is handled automatically before `start()` resolves. Set `skipTutorial: false` to have the tutorial menu forwarded via `inputRequired` instead.
+The startup sequence (character selection, name entry, intro text, tutorial) is handled automatically before `start()` resolves. When restoring from a save, character creation is skipped and the game resumes directly. Set `skipTutorial: false` to have the tutorial menu forwarded via `inputRequired` instead.
 
 ### Advanced: Emscripten Module Config
 
-All unrecognized properties in `moduleOptions` are forwarded to the Emscripten Module. This includes `preRun` hooks for low-level setup:
-
-```js
-await game.start(createModule, {
-    nethackOptions: { name: "Rodney" },
-    preRun: [(mod) => {
-        // Mount IndexedDB filesystem for save persistence
-        mod.FS.mkdir("/save");
-        mod.FS.mount(mod.IDBFS, {}, "/save");
-        mod.FS.syncfs(true, () => {});
-    }],
-    print: () => {},
-    printErr: () => {},
-});
-```
-
-`preRun` hooks run before `_main()`. Use them for filesystem setup or other low-level Emscripten configuration. For NETHACKOPTIONS, prefer `nethackOptions.options` instead.
+All unrecognized properties in `moduleOptions` are forwarded to the Emscripten Module. This includes `preRun` hooks for low-level setup. For NETHACKOPTIONS, prefer `nethackOptions.options` instead. For save persistence, prefer the built-in `saves` and `saveDir` options.
 
 ## Sending Commands
 
@@ -127,11 +116,31 @@ game.action("eat:d");      // verb + item letter (eat, wield, drop, etc.)
 game.action("pray");       // extended command → sends #pray\n
 game.action("y");          // fallback: routes through handleKey
 
+// Save & quit (auto-confirms "Really save?" and syncs to IndexedDB)
+await game.save();         // returns a Promise, resolves after IndexedDB sync
+
 // Quit the game (auto-confirms all prompts)
 game.quit();               // returns a Promise, resolves at gameOver
-// Or use action() for manual quit (you handle the yn prompts yourself):
+
+// Or use action() for manual save/quit (you handle the yn prompts yourself):
+game.action("save");       // sends #save — you must answer "Really save?" etc.
 game.action("quit");       // sends #quit — you must answer "Really quit?" etc.
 ```
+
+### Save Management
+
+```js
+// Check for save files without booting WASM (static method)
+const hasSave = await NethackStateManager.hasSaveFiles("/save-37-slot1");
+
+// List save files in the mounted save directory (requires a running game)
+game.listSaves();          // → ["0Player"] or [] if none
+
+// Manually sync save files from memory FS to IndexedDB
+await game.syncSaves();    // emits "savesSynced" when complete
+```
+
+`save()` handles the full sequence: dispatches `#save`, auto-answers all prompts, waits for the game to exit, syncs to IndexedDB, then resolves. `hasSaveFiles()` checks IndexedDB directly — use it to detect existing saves before starting a game. `listSaves()` and `syncSaves()` are lower-level — use them for custom save management flows.
 
 `action()` handles all dispatch logic:
 1. **`verb:letter`** — calls the verb method (e.g. `eat("d")`) which manages the item prompt sequence
@@ -378,6 +387,7 @@ game.off(event, callback);
 | `textWindow` | `(lines)` | Text window displayed (array of strings) |
 | `phaseChange` | `(phase)` | Game phase changed |
 | `gameOver` | `({ how, when })` | Game ended |
+| `savesSynced` | — | Save files successfully synced to IndexedDB |
 | `inputBlocked` | `({ reason, ... })` | Input was dropped because a menu (or other prompt) is blocking. Only emitted when `autoDismissMenus` is `false`. |
 | `rawCallback` | `(name, args)` | Every WASM window-port callback (escape hatch for anything not covered above) |
 

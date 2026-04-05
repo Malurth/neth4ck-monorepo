@@ -257,6 +257,12 @@ export function createCallbackRouter(ctx) {
                     }
                 }
 
+                // Lazily build the monster registry if needed (save restore:
+                // map callbacks fire during _main before the registry is built).
+                if (!state.monsters && ctx.ensureMonsterRegistry) {
+                    ctx.ensureMonsterRegistry();
+                }
+
                 // Classify the foreground glyph
                 const glyphConstants = ctx.ng?.constants?.GLYPH;
                 const tileType = classifyGlyph(glyph, glyphConstants);

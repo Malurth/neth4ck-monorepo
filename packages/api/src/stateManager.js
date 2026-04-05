@@ -74,6 +74,7 @@ export class NethackStateManager {
         };
         this._pendingDirectionalAction = null;
         this._savesMounted = false;
+        this._saveInProgress = false;
     }
 
     // ── Lifecycle ────────────────────────────
@@ -149,18 +150,33 @@ export class NethackStateManager {
         // js_constants_init, and js_globals_init.
         globalThis.nethackGlobal = {};
 
+        // Assign ctx.ng NOW (before _main) so that callbacks fired during
+        // _main() — such as shim_print_glyph during save restore — can
+        // read glyph helpers and constants as js_helpers_init populates
+        // them. Both ctx.ng and nethackGlobal point to the same object,
+        // so mutations during _main() are visible immediately.
+        this._ctx.ng = globalThis.nethackGlobal;
+
+        // Expose the monster registry builder on the context so the
+        // callbackRouter can trigger it lazily during shim_print_glyph
+        // (needed for save restores where map callbacks fire during _main
+        // before _buildMonsterRegistry would normally run).
+        this._ctx.ensureMonsterRegistry = () => {
+            if (!this._ctx.state.monsters && this._ctx.ng?.constants?.GLYPH?.NUMMONS) {
+                this._buildMonsterRegistry();
+            }
+        };
+
         // Start the game loop (non-blocking — Asyncify suspends on input).
         // _main() runs synchronously through init (which installs helpers via
         // js_helpers_init) before suspending at the first input prompt.
         this._module._main(0, 0);
 
-        // Capture this session's nethackGlobal on the context so all reads
-        // are scoped to this game instance, not the (overwritable) global.
-        this._ctx.ng = globalThis.nethackGlobal;
-
-        // Build monster registry from WASM data (must be after _main, which
-        // runs js_constants_init to export struct pointers and offsets)
-        this._buildMonsterRegistry();
+        // Ensure monster registry is built (covers cases where no map
+        // callbacks fired during _main, e.g. new game before first map paint)
+        if (!this._ctx.state.monsters) {
+            this._buildMonsterRegistry();
+        }
 
         // Refresh inventory on every input prompt and map update — these are
         // points when the game is suspended and WASM memory is stable.
@@ -172,9 +188,10 @@ export class NethackStateManager {
         });
         this.on("mapUpdate", () => this._maybeRefreshInventory());
 
-        // Auto-persist saves to IndexedDB when the game ends
+        // Auto-persist saves to IndexedDB when the game ends.
+        // Skipped when save() is in progress — it handles sync itself.
         this.on("phaseChange", (phase) => {
-            if (phase === "gameOver" && this._savesMounted) {
+            if (phase === "gameOver" && this._savesMounted && !this._saveInProgress) {
                 this.syncSaves().catch((e) =>
                     console.warn("[saves] sync on exit failed:", e));
             }
@@ -637,6 +654,133 @@ export class NethackStateManager {
         return Promise.resolve();
     }
 
+    /**
+     * Save the game and exit. Auto-answers all prompts during the
+     * save sequence (extcmd selection, "Really save?" yn).
+     * After this method returns, the game has exited and save files
+     * are written to the memory FS (call syncSaves() to persist to
+     * IndexedDB).
+     */
+    save() {
+        this._emitAction({ action: "save" });
+        if (this._ctx.inputInterceptor) {
+            return Promise.reject(
+                new Error("another input sequence is already in progress")
+            );
+        }
+        const inputType = this.pendingInputType;
+        if (inputType && inputType !== "key" && inputType !== "poskey") {
+            return Promise.reject(
+                new Error(
+                    `cannot save: game is waiting for '${inputType}' input, not gameplay`
+                )
+            );
+        }
+
+        // Return a promise that resolves after the full save sequence:
+        // sendKey("#") → interceptor catches extcmd → sends save index →
+        // interceptor catches "Really save?" yn → answers y →
+        // NetHack writes save file → game exits → we sync to IndexedDB.
+        //
+        // The interceptor is deferred via setTimeout in setInput(),
+        // so the sequence plays out asynchronously across multiple
+        // microtasks. We listen for phaseChange("gameOver") to know
+        // when the game has exited, then sync and resolve.
+        this._saveInProgress = true;
+        return new Promise((resolve) => {
+            this._ctx.inputInterceptor = (prompt) => {
+                if (prompt.type === "extcmd") {
+                    const idx = this._lookupExtCmdIndex("save");
+                    this.sendExtCmd(idx);
+                    return true;
+                }
+                if (prompt.type === "yn") {
+                    const query = (prompt.query || "").toLowerCase();
+                    if (query.includes("really save")) {
+                        this.answerYn("y");
+                        return true;
+                    }
+                    this.answerYn(prompt.default || "y");
+                    return true;
+                }
+                if (prompt.type === "key") {
+                    this.sendKey(" ");
+                    return true;
+                }
+                return false;
+            };
+
+            // When the game exits (via quit callback or phaseChange),
+            // clean up, sync saves, and resolve.
+            let onExit = () => {
+                this._ctx.inputInterceptor = null;
+                this._saveInProgress = false;
+                // Phase is already set by the callbackRouter's
+                // shim_exit_nhwindows handler; ensure it's set
+                // in case we got here via a different path.
+                this._ctx.state.phase = "gameOver";
+
+                if (this._savesMounted) {
+                    const FS = this._module?.FS;
+                    if (FS) {
+                        try {
+                            const files = FS.readdir(this._saveDir)
+                                .filter((f) => f !== "." && f !== "..");
+                            if (files.length > 0) {
+                                FS.syncfs(false, (err) => {
+                                    if (err) console.warn("[save] syncfs error:", err);
+                                    this._emitter.emit("savesSynced");
+                                    resolve();
+                                });
+                                return;
+                            }
+                        } catch { /* FS may be gone */ }
+                    }
+                }
+
+                resolve();
+            };
+
+            // Listen for the game exiting — callbackRouter emits
+            // phaseChange("gameOver") when NetHack calls done()/exit().
+            const onPhase = (phase) => {
+                if (phase === "gameOver") {
+                    this.off("phaseChange", onPhase);
+                    onExit();
+                }
+            };
+            this.on("phaseChange", onPhase);
+
+            // Also handle direct gameOver event (some exit paths use it)
+            this.once("gameOver", () => {
+                this.off("phaseChange", onPhase);
+                onExit();
+            });
+
+            // Safety timeout — if the game doesn't exit within 10s,
+            // resolve anyway (the save may have worked but the exit
+            // event was lost, e.g. in test environments).
+            const timeout = setTimeout(() => {
+                this.off("phaseChange", onPhase);
+                this._ctx.inputInterceptor = null;
+                this._saveInProgress = false;
+                this._ctx.state.phase = "gameOver";
+                resolve();
+            }, 10000);
+
+            const origOnExit = onExit;
+            onExit = () => {
+                clearTimeout(timeout);
+                origOnExit();
+            };
+
+            // Send "#" to start the extended command sequence.
+            // This resolves the current key/poskey prompt; the rest
+            // plays out asynchronously via the interceptor.
+            this.sendKey("#");
+        });
+    }
+
     // ── Save Management ─────────────────────
 
     /**
@@ -654,8 +798,24 @@ export class NethackStateManager {
             return;
         }
 
+        // Mount IDBFS at the version-specific dir (e.g. /save-37).
+        // This gives each version its own IndexedDB database, since
+        // IDBFS uses the mount path as the DB name.
         try { FS.mkdir(dir); } catch { /* already exists */ }
         FS.mount(IDBFS, {}, dir);
+
+        // NetHack writes saves to /save/ (hardcoded). Symlink it to
+        // the version-specific dir so writes land in the IDBFS mount.
+        const nethackSaveDir = "/save";
+        try { FS.unlink(nethackSaveDir); } catch { /* doesn't exist */ }
+        try { FS.rmdir(nethackSaveDir); } catch { /* doesn't exist or not empty */ }
+        try {
+            FS.symlink(dir, nethackSaveDir);
+        } catch {
+            // Symlink failed — fall back to using dir directly.
+            // NetHack may not find saves, but at least we don't crash.
+            console.warn(`[saves] could not symlink ${nethackSaveDir} → ${dir}`);
+        }
 
         // Populate from IndexedDB → memory FS (await completion)
         await new Promise((resolve, reject) => {
@@ -689,6 +849,65 @@ export class NethackStateManager {
             FS.syncfs(false, (err) => err ? reject(err) : resolve(undefined));
         });
         this._emitter.emit("savesSynced");
+    }
+
+    /**
+     * List save files currently in the save directory.
+     * Returns an array of filenames (empty if saves not mounted).
+     */
+    listSaves() {
+        if (!this._savesMounted) return [];
+        const FS = this._module?.FS;
+        if (!FS) return [];
+        try {
+            return FS.readdir(this._saveDir).filter((f) => f !== "." && f !== "..");
+        } catch {
+            return [];
+        }
+    }
+
+    /**
+     * Check if an IDBFS save directory has files, without booting WASM.
+     * Opens the IndexedDB database directly (Emscripten IDBFS uses the
+     * mount path as the DB name with version 21).
+     *
+     * @param {string} saveDir — the IDBFS mount path (e.g. "/save-37-s-123")
+     * @returns {Promise<boolean>} true if the database has at least one file
+     */
+    static async hasSaveFiles(saveDir) {
+        if (typeof indexedDB === "undefined") return false;
+
+        // Fast check: does the DB even exist?
+        if (typeof indexedDB.databases === "function") {
+            try {
+                const dbs = await indexedDB.databases();
+                if (!dbs.some((db) => db.name === saveDir)) return false;
+            } catch { /* fall through to open check */ }
+        }
+
+        return new Promise((resolve) => {
+            let req;
+            try { req = indexedDB.open(saveDir, 21); }
+            catch { resolve(false); return; }
+
+            req.onerror = () => resolve(false);
+            req.onupgradeneeded = () => {
+                try { req.transaction?.abort(); } catch {}
+                resolve(false);
+            };
+            req.onsuccess = () => {
+                const db = req.result;
+                if (!db.objectStoreNames.contains("FILE_DATA")) {
+                    db.close(); resolve(false); return;
+                }
+                try {
+                    const tx = db.transaction("FILE_DATA", "readonly");
+                    const count = tx.objectStore("FILE_DATA").count();
+                    count.onsuccess = () => { db.close(); resolve(count.result > 0); };
+                    count.onerror = () => { db.close(); resolve(false); };
+                } catch { db.close(); resolve(false); }
+            };
+        });
     }
 
     // ── Input Methods ────────────────────────
@@ -1055,6 +1274,7 @@ export class NethackStateManager {
         this._introText = [];
         this._startupMessages = [];
         let sawMap = false;
+        let sawCharSelect = false;
         let keyPromptCount = 0;
 
         // Capture text windows during startup
@@ -1090,6 +1310,7 @@ export class NethackStateManager {
             this._ctx.inputInterceptor = (prompt) => {
                 switch (prompt.type) {
                     case "charSelect":
+                        sawCharSelect = true;
                         this.resolveCharSelect(false);
                         return true;
                     case "line":
@@ -1128,7 +1349,10 @@ export class NethackStateManager {
                     case "key":
                     case "poskey":
                         keyPromptCount++;
-                        if (sawMap && keyPromptCount >= 2) {
+                        // On restore (no charSelect), the first key/poskey
+                        // after map IS gameplay — don't send space.
+                        // On new game, need 2 key prompts (--More-- then gameplay).
+                        if (sawMap && (!sawCharSelect || keyPromptCount >= 2)) {
                             cleanup();
                             return false; // forward to consumer
                         }
