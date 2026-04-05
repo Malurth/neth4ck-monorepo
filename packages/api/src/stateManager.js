@@ -294,6 +294,32 @@ export class NethackStateManager {
         return this._ctx.state.conditions;
     }
 
+    /** Player's role/class name (e.g. "Barbarian", "Wizard").
+     *  Read from the C global `pl_character` via nethackGlobal. */
+    get role() {
+        // 3.7 uses svp.pl_character, 3.6.7 uses pl_character directly
+        const g = this._ctx.ng?.globals;
+        return g?.svp?.pl_character ?? g?.pl_character ?? null;
+    }
+
+    /** Player's race name (e.g. "Human", "Elf").
+     *  Derived from flags.initrace index → races[] array (consistent across versions). */
+    get race() {
+        const RACES = ["Human", "Elf", "Dwarf", "Gnome", "Orc"];
+        const idx = this._ctx.ng?.globals?.flags?.initrace;
+        return (typeof idx === "number" && idx >= 0 && idx < RACES.length)
+            ? RACES[idx] : null;
+    }
+
+    /** Player's gender (e.g. "Male", "Female").
+     *  Derived from flags.initgend index → genders[] array. */
+    get gender() {
+        const GENDERS = ["Male", "Female", "Neuter"];
+        const idx = this._ctx.ng?.globals?.flags?.initgend;
+        return (typeof idx === "number" && idx >= 0 && idx < GENDERS.length)
+            ? GENDERS[idx] : null;
+    }
+
     /** Current game phase: "init" | "charSelect" | "playing" | "gameOver" */
     get phase() {
         return this._ctx.state.phase;
