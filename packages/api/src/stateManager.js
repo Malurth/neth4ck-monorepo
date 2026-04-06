@@ -279,6 +279,28 @@ export class NethackStateManager {
         return mod.UTF8ToString(ptr);
     }
 
+    /**
+     * Describe the underlying terrain feature at (x, y), ignoring any
+     * monster or object standing on the tile. Returns strings like
+     * "closed door", "open door", "doorway", "broken door", "fountain",
+     * "altar to <god>", "staircase down", etc. Returns an empty string
+     * when the tile has no notable dungeon feature (plain floor/wall).
+     *
+     * Prefer this over lookAt() when you want the tile's actual terrain
+     * and not what happens to be visibly on top of it.
+     *
+     * @param {number} x
+     * @param {number} y
+     * @returns {string}
+     */
+    terrainAt(x, y) {
+        const mod = this._ctx.module;
+        if (!mod?._get_terrain_description) return "";
+        const ptr = mod._get_terrain_description(x, y);
+        if (!ptr) return "";
+        return mod.UTF8ToString(ptr);
+    }
+
     /** Status bar fields */
     get status() {
         return this._ctx.state.status;
