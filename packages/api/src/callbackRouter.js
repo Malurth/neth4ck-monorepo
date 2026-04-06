@@ -324,7 +324,31 @@ export function createCallbackRouter(ctx) {
                 // Persistent: features stay until position shows plain terrain.
                 if (tileType === "feature") {
                     const charStr = ch ? String.fromCharCode(ch) : "";
-                    const featureName = FEATURE_NAMES[charStr];
+                    // Use get_levl_typ for an UNAMBIGUOUS feature name.
+                    // The glyph character is shared between terrain types
+                    // (e.g. '{' is both fountain and sink, '\\' is both grave and throne),
+                    // so glyph-based naming gives ambiguous strings like "fountain or sink".
+                    // get_levl_typ reads the actual terrain enum from the C engine.
+                    const getLevlTyp = ctx.module?._get_levl_typ;
+                    const levlTyp = ctx.ng?.constants?.LEVL_TYP;
+                    let featureName = null;
+                    if (getLevlTyp && levlTyp) {
+                        const typ = getLevlTyp(x, y);
+                        const typName = levlTyp[typ];
+                        if (typName) {
+                            featureName = (/** @type {Record<string,string>} */ (TERRAIN_TYPE_NAMES))[typName] || null;
+                            // For stairs/ladders, resolve direction
+                            const getStairDir = ctx.module?._get_stair_direction;
+                            if (featureName && getStairDir
+                                    && (typName === "STAIRS" || typName === "LADDER")) {
+                                const dir = getStairDir(x, y);
+                                if (dir === 1 || dir === 3) featureName += " up";
+                                else if (dir === 2 || dir === 4) featureName += " down";
+                            }
+                        }
+                    }
+                    // Fallback to glyph-based name if get_levl_typ failed
+                    if (!featureName) featureName = (/** @type {Record<string,string>} */ (FEATURE_NAMES))[charStr];
                     if (featureName) {
                         featuresByPosition.set(posKey, {
                             x, y, ch: charStr, color, glyph,

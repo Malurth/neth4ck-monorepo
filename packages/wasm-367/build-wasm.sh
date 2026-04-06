@@ -130,6 +130,13 @@ fi
 echo "  Cleaning old object files..."
 rm -f "$NH/src/"*.o "$NH/src/Sysunix" "$NH/src/nethack" "$NH/src/nethack.js" "$NH/src/nethack.wasm"
 
+# Workaround WSL clock skew: source files edited from Windows have Windows
+# timestamps that may not align with the WSL clock, causing make to either
+# warn about clock skew or silently skip linking. Touch all sources to give
+# them a current WSL timestamp before building.
+echo "  Touching sources to fix WSL clock skew..."
+find "$NH" \( -name '*.c' -o -name '*.h' -o -name 'Makefile*' \) -exec touch {} + 2>/dev/null || true
+
 echo "  Compiling with emcc..."
 make -C src
 

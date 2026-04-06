@@ -55,6 +55,11 @@ echo "  done."
 # ------------------------------------------------------------------
 echo ""
 echo "--- Building WASM ---"
+# Workaround WSL clock skew: source files edited from Windows have Windows
+# timestamps that may not align with the WSL clock, causing make to either
+# warn about clock skew or silently skip linking. Touch all sources to give
+# them a current WSL timestamp before building.
+find "$NH" \( -name '*.c' -o -name '*.h' -o -name 'Makefile*' \) -exec touch {} + 2>/dev/null || true
 make CROSS_TO_WASM=1 all
 
 echo ""

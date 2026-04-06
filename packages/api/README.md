@@ -336,6 +336,31 @@ game.visibleFeatures
 
 Direct queries into the WASM engine's dungeon and vision data — useful for AI narration, accessibility, or any frontend that needs spatial awareness beyond the glyph map.
 
+#### Bulk terrain dump (preferred)
+
+```js
+game.getTerrainMap()
+// Returns { chars, colors, typs, visions, lits, roomNos } or null if unavailable.
+// Each field is a parallel array of length COLNO * ROWNO (1680), row-major,
+// indexed as `y * COLNO + x`. All come from one bulk WASM call:
+//
+//   chars   — string of 1680 chars: the terrain glyph at each tile
+//             (back_to_glyph — entity-stripped, no monsters/items/effects)
+//   colors  — Uint8Array: NetHack color enum (0-15) per tile
+//   typs    — Uint8Array: terrain enum from levl[x][y].typ (e.g. ROOM, DOOR, FOUNTAIN)
+//             use game.constants.LEVL_TYP to map values to names
+//   visions — Uint8Array: vision flags (COULD_SEE=0x1 | IN_SIGHT=0x2 | TEMP_LIT=0x4)
+//   lits    — Uint8Array: 1 if lit, 0 if dark
+//   roomNos — Uint8Array: room number 0-63 (0 = corridor / no room)
+//
+// Stable across entity movement; only changes on real terrain changes
+// (vision expansion, doors opening, level transitions, etc.).
+// One FFI call replaces ~6 separate per-tile queries — much faster for
+// frontends that need to scan the whole map.
+```
+
+#### Per-tile queries (one-off / fallback)
+
 ```js
 // Vision state at a map position (bitmask)
 game.getVisionAt(x, y)
@@ -359,6 +384,9 @@ game.getLevelTyp(x, y)    // enum value, -1 = unseen/OOB
 // Human-readable tile description (synchronous)
 game.lookAt(x, y)         // e.g. "floor of a room", "an open door", "a fountain"
 ```
+
+For scanning the whole map, prefer `getTerrainMap()` — it returns all the
+above data in one call instead of doing thousands of individual FFI calls.
 
 ### Startup Text
 

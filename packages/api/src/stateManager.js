@@ -425,6 +425,58 @@ export class NethackStateManager {
     }
 
     /**
+     * Get the clean terrain layer of the map (entity-stripped) with rich per-tile data.
+     * Returns an object with parallel typed arrays, each indexed by (y * COLNO + x):
+     *   chars   — string of COLNO * ROWNO chars (1680): the terrain glyph at each tile
+     *   colors  — Uint8Array (1680): NetHack color enum (0-15)
+     *   typs    — Uint8Array (1680): terrain enum from levl[x][y].typ
+     *   visions — Uint8Array (1680): vision flags (COULD_SEE=0x1 | IN_SIGHT=0x2 | TEMP_LIT=0x4)
+     *   lits    — Uint8Array (1680): 1 if lit, 0 if dark
+     *   roomNos — Uint8Array (1680): room number 0-63
+     *
+     * Values come from NetHack's back_to_glyph() — the authoritative background
+     * glyph (no monsters/items/effects). Stable across entity movement; only
+     * changes on real terrain changes.
+     *
+     * One bulk FFI call replaces ~6 separate per-tile queries (get_levl_typ,
+     * get_vision_at, get_levl_lit, get_levl_roomno, get_feature_color, etc.).
+     * Returns null if the function isn't available.
+     */
+    getTerrainMap() {
+        const mod = this._module;
+        if (!mod || !mod._get_terrain_map || !mod._malloc || !mod._free || !mod.HEAPU8) return null;
+        const COLNO = 80;
+        const ROWNO = 21;
+        const tileCount = COLNO * ROWNO;
+        const STRIDE = 5; // 5 bytes per tile: char, color, typ, vision, flags
+        const bufSize = tileCount * STRIDE;
+        const ptr = mod._malloc(bufSize);
+        try {
+            mod._get_terrain_map(ptr);
+            const raw = new Uint8Array(mod.HEAPU8.buffer, ptr, bufSize);
+            let chars = "";
+            const colors = new Uint8Array(tileCount);
+            const typs = new Uint8Array(tileCount);
+            const visions = new Uint8Array(tileCount);
+            const lits = new Uint8Array(tileCount);
+            const roomNos = new Uint8Array(tileCount);
+            for (let i = 0; i < tileCount; i++) {
+                const base = i * STRIDE;
+                chars += String.fromCharCode(raw[base]);
+                colors[i] = raw[base + 1];
+                typs[i] = raw[base + 2];
+                visions[i] = raw[base + 3];
+                const flags = raw[base + 4];
+                lits[i] = flags & 0x1;
+                roomNos[i] = (flags >> 1) & 0x7F;
+            }
+            return { chars, colors, typs, visions, lits, roomNos };
+        } finally {
+            mod._free(ptr);
+        }
+    }
+
+    /**
      * Current inventory items, read from WASM memory. Auto-refreshes on input prompts.
      * Each entry: { letter, name, appearance, oclass, otyp, quantity, enchantment, worn, wornMask }
      */
