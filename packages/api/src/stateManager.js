@@ -228,7 +228,18 @@ export class NethackStateManager {
         return this._ctx.state;
     }
 
-    /** Current map grid (MapTile[][]) */
+    /**
+     * Current map grid, indexed as `map[y][x]` (or `map[x][y]` if
+     * `mapCoordinateOrder: "xy"` was passed at start). Each tile is an
+     * object with `{glyph, tileIndex, ch, color, special, x, y}` — the
+     * `ch` and `color` fields hold NetHack's already-priority-resolved
+     * topmost glyph at that tile (monster on top of item on top of
+     * feature on top of terrain). Use these directly for rendering
+     * rather than merging the separate `visibleMonsters`/`visibleItems`/
+     * `visibleFeatures` lists, which would require the frontend to
+     * reimplement render priority and is a common source of overwrite
+     * bugs. Those lists are intended for non-rendering uses.
+     */
     get map() {
         return this._ctx.state.map;
     }

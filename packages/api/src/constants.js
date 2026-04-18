@@ -60,8 +60,22 @@ export const STRING_STATUS_FIELDS = new Set([
     "levelDesc",
 ]);
 
-// Condition bitmask → human-readable name
-export const CONDITION_NAMES = {
+// Condition bitmask → human-readable name.
+//
+// NetHack 3.6.7 and 3.7 use DIFFERENT bit layouts for these flags (3.7
+// added many new conditions and renumbered most of the existing ones).
+// The bits in each table are taken verbatim from the respective
+// version's `include/botl.h` `BL_MASK_*` defines, so that ANDing the
+// raw bitmask from NetHack's status-update callback against these
+// tables gives the correct name in each version.
+//
+// Callers that don't know which version they're running should import
+// `getConditionTable` from the callback router (it probes version via
+// ng.globals.svp, which exists only in 3.7) rather than reading these
+// directly. `CONDITION_NAMES` is kept as an alias of the 3.6.7 table
+// for backward compatibility with any existing external consumers.
+
+export const CONDITION_NAMES_367 = {
     0x00000001: "stone",
     0x00000002: "slime",
     0x00000004: "strngl",
@@ -77,13 +91,56 @@ export const CONDITION_NAMES = {
     0x00001000: "ride",
 };
 
+export const CONDITION_NAMES_37 = {
+    0x00000001: "bareh",
+    0x00000002: "blind",
+    0x00000004: "busy",
+    0x00000008: "conf",
+    0x00000010: "deaf",
+    0x00000020: "elf_iron",
+    0x00000040: "fly",
+    0x00000080: "foodpois",
+    0x00000100: "glowhands",
+    0x00000200: "grab",
+    0x00000400: "hallu",
+    0x00000800: "held",
+    0x00001000: "icy",
+    0x00002000: "inlava",
+    0x00004000: "lev",
+    0x00008000: "parlyz",
+    0x00010000: "ride",
+    0x00020000: "sleeping",
+    0x00040000: "slime",
+    0x00080000: "slippery",
+    0x00100000: "stone",
+    0x00200000: "strngl",
+    0x00400000: "stun",
+    0x00800000: "submerged",
+    0x01000000: "termill",
+    0x02000000: "tethered",
+    0x04000000: "trapped",
+    0x08000000: "unconsc",
+    0x10000000: "woundedl",
+    0x20000000: "holding",
+};
+
+/** @deprecated Use `CONDITION_NAMES_367` / `CONDITION_NAMES_37` explicitly,
+ *  or the version-aware helper in `callbackRouter`. Kept for backward
+ *  compatibility with any pre-3.7 callers. */
+export const CONDITION_NAMES = CONDITION_NAMES_367;
+
 // ── Frontend-facing constants ────────────────────────────────
 
 /** All possible status field keys on state.status */
 export const STATUS_FIELDS = Object.values(STATUS_FIELD_MAP);
 
-/** All possible condition names that can appear in state.conditions */
-export const CONDITIONS = Object.values(CONDITION_NAMES);
+/** All possible condition names that can appear in `state.conditions`,
+ *  across both supported NetHack versions. Useful for exhaustive switch
+ *  statements on the frontend. */
+export const CONDITIONS = Array.from(new Set([
+    ...Object.values(CONDITION_NAMES_367),
+    ...Object.values(CONDITION_NAMES_37),
+]));
 
 /** Text attribute constants (matches NetHack ATR_* values) */
 export const ATTR = {
@@ -212,6 +269,11 @@ export const EXTENDED_COMMANDS = new Set([
     "chat", "dip", "enhance", "force", "invoke", "jump", "monster",
     "loot", "pray", "quit", "rub", "save", "sit", "turn", "untrap",
     "wipe", "offer", "ride", "tip",
+    // Wizard-mode commands (require playmode:debug)
+    "wizwish", "wizgenesis", "wizidentify", "wizmap", "wizdetect",
+    "wizwhere", "wizmakemap", "wizpolyself", "wizintrinsic",
+    "wizbury", "wizsmell", "wizcast",
+    "wizlevelchange", "wizlevelport",   // 3.7 / 3.6.7 names for level teleport
 ]);
 
 /**

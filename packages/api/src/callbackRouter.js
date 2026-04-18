@@ -1,5 +1,6 @@
 import {
-    CONDITION_NAMES,
+    CONDITION_NAMES_37,
+    CONDITION_NAMES_367,
     FEATURE_NAMES,
     ITEM_CATEGORY_BY_CHAR,
     MAP_HEIGHT,
@@ -151,9 +152,25 @@ export function createCallbackRouter(ctx) {
         }
     }
 
+    // NetHack 3.6.7 and 3.7 use disjoint bitmask layouts for condition
+    // flags. The right table is picked once per router based on a
+    // probe of `ctx.ng.globals.svp` — the `svp.` container for static
+    // variable pointers exists only in 3.7. Cached after the first
+    // resolution so we don't pay for the probe on every status update.
+    /** @type {Record<string, string> | null} */
+    let resolvedConditionTable = null;
+    /** @returns {Record<string, string>} */
+    function getConditionTable() {
+        if (resolvedConditionTable) return resolvedConditionTable;
+        const is37 = !!ctx.ng?.globals?.svp;
+        resolvedConditionTable = is37 ? CONDITION_NAMES_37 : CONDITION_NAMES_367;
+        return resolvedConditionTable;
+    }
+
     function parseConditionBitmask(value) {
+        const table = getConditionTable();
         const newConditions = new Set();
-        for (const [mask, name] of Object.entries(CONDITION_NAMES)) {
+        for (const [mask, name] of Object.entries(table)) {
             if (value & Number(mask)) {
                 newConditions.add(name);
             }
