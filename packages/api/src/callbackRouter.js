@@ -606,6 +606,37 @@ export function createCallbackRouter(ctx) {
                     return 0;
                 }
 
+                // Auto-assign accelerator keys to selectable items that
+                // lack one (e.g. the loot-container options menu). This
+                // lets frontends always use character-based selection
+                // without needing to know about raw identifiers.
+                if (how !== 0 && how !== "PICK_NONE") {
+                    let nextKey = "a".charCodeAt(0); // 97
+                    const usedKeys = new Set(
+                        menu.items
+                            .filter(i => i.accelerator)
+                            .map(i => i.accelerator),
+                    );
+                    for (const item of menu.items) {
+                        if (item.identifier && !item.accelerator) {
+                            // Find next available letter (a-z, then A-Z)
+                            while (usedKeys.has(String.fromCharCode(nextKey))) {
+                                nextKey++;
+                                if (nextKey > "z".charCodeAt(0)) nextKey = "A".charCodeAt(0);
+                                if (nextKey > "Z".charCodeAt(0)) break; // exhausted
+                            }
+                            if (nextKey <= "Z".charCodeAt(0) || nextKey <= "z".charCodeAt(0)) {
+                                item.accelerator = String.fromCharCode(nextKey);
+                                usedKeys.add(item.accelerator);
+                                nextKey++;
+                                if (nextKey > "z".charCodeAt(0) && nextKey < "A".charCodeAt(0)) {
+                                    nextKey = "A".charCodeAt(0);
+                                }
+                            }
+                        }
+                    }
+                }
+
                 state.activeMenu = menu;
                 emitter.emit("menuOpen", menu);
                 // WASM expects an integer return (count of selected items,
@@ -620,34 +651,46 @@ export function createCallbackRouter(ctx) {
                     if (Array.isArray(value) && value.length > 0) {
                         const mod = ctx.module;
                         if (mod?._malloc && mod?.setValue && mod?._get_select_menu_pick_list_ptr) {
-                            // Map selected identifiers to menu items.
-                            // selectMenuItem passes accelerator chars; match on those.
+                            // Map selected values to menu items.
+                            // Values can be accelerator chars or identifier numbers.
                             const selected = [];
                             for (const sel of value) {
                                 const found = menu.items.find(
                                     i => i.accelerator === sel || i.identifier === sel
                                 );
-                                if (found) selected.push(found);
-                            }
-                            if (selected.length > 0) {
-                                // Allocate MENU_ITEM_P array on WASM heap.
-                                // struct mi { anything item (8 bytes); long count (4); unsigned itemflags (4); } = 16 bytes
-                                const SIZEOF_MI = 16;
-                                const ptr = mod._malloc(SIZEOF_MI * selected.length);
-                                for (let i = 0; i < selected.length; i++) {
-                                    const offset = ptr + i * SIZEOF_MI;
-                                    // identifier was already read as a value during
-                                    // add_menu (not a pointer) — use it directly
-                                    mod.setValue(offset, selected[i].identifier, "i32"); // item.a_int
-                                    mod.setValue(offset + 4, 0, "i32");     // padding (rest of anything union)
-                                    mod.setValue(offset + 8, -1, "i32");    // count = -1 (all)
-                                    mod.setValue(offset + 12, 0, "i32");    // itemflags = 0
+                                if (found) {
+                                    selected.push(found);
+                                } else {
+                                    emitter.emit("warning", {
+                                        type: "invalidMenuSelection",
+                                        value: sel,
+                                        prompt: menu.prompt,
+                                        message: `Menu selection ${JSON.stringify(sel)} does not match any item in "${menu.prompt || "(unnamed menu)"}"`,
+                                    });
                                 }
-                                // Store pointer in global for C shim to copy
-                                const globalPtr = mod._get_select_menu_pick_list_ptr();
-                                mod.setValue(globalPtr, ptr, "*");
-                                return selected.length;
                             }
+                            // If nothing matched, treat as no selection rather
+                            // than writing garbage to WASM heap.
+                            if (selected.length === 0) {
+                                return 0;
+                            }
+                            // Allocate MENU_ITEM_P array on WASM heap.
+                            // struct mi { anything item (8 bytes); long count (4); unsigned itemflags (4); } = 16 bytes
+                            const SIZEOF_MI = 16;
+                            const ptr = mod._malloc(SIZEOF_MI * selected.length);
+                            for (let i = 0; i < selected.length; i++) {
+                                const offset = ptr + i * SIZEOF_MI;
+                                // identifier was already read as a value during
+                                // add_menu (not a pointer) — use it directly
+                                mod.setValue(offset, selected[i].identifier, "i32"); // item.a_int
+                                mod.setValue(offset + 4, 0, "i32");     // padding (rest of anything union)
+                                mod.setValue(offset + 8, -1, "i32");    // count = -1 (all)
+                                mod.setValue(offset + 12, 0, "i32");    // itemflags = 0
+                            }
+                            // Store pointer in global for C shim to copy
+                            const globalPtr = mod._get_select_menu_pick_list_ptr();
+                            mod.setValue(globalPtr, ptr, "*");
+                            return selected.length;
                         }
                         return value.length;
                     }

@@ -188,10 +188,14 @@ game.answerLine("Excalibur");     // answer a text prompt (e.g. "Call this item:
 #### Menus
 
 ```js
-game.selectMenuItems([ids]);  // select items by identifier
+game.selectMenuItems([ids]);  // select items by accelerator char or identifier
 game.selectMenuItem(id);      // select a single item
 game.dismissMenu();           // close without selecting (ESC)
 ```
+
+Menu items from the WASM engine sometimes lack accelerator keys (e.g. the container loot options menu). The API auto-assigns sequential keys (`a`, `b`, `c`...) to any selectable item without one, so frontends can always use character-based selection via `handleKey()`. The original `identifier` values remain available on the item objects for programmatic use.
+
+Invalid selections (values that don't match any item's accelerator or identifier) are dropped before reaching the WASM engine and emit a `warning` event with `type: "invalidMenuSelection"`.
 
 #### Position & Look
 
@@ -439,12 +443,13 @@ game.off(event, callback);
 | `conditionChange` | `(conditions, added, removed)` | Conditions added or removed |
 | `inventoryUpdate` | `(items)` | Inventory changed |
 | `monstersUpdate` | `(visibleMonsters)` | Visible monsters on the map changed |
-| `menuOpen` | `(menu)` | Menu opened. `menu: { windowId, prompt, selectionMode, items }` |
+| `menuOpen` | `(menu)` | Menu opened. `menu: { windowId, prompt, selectionMode, items }`. Items have `{ identifier, accelerator, text, ... }` — accelerators are auto-assigned for items that lack them. |
 | `textWindow` | `(lines)` | Text window displayed (array of strings) |
 | `phaseChange` | `(phase)` | Game phase changed |
 | `gameOver` | `({ how, when })` | Game ended |
 | `savesSynced` | — | Save files successfully synced to IndexedDB |
 | `inputBlocked` | `({ reason, ... })` | Input was dropped because a menu (or other prompt) is blocking. Only emitted when `autoDismissMenus` is `false`. |
+| `warning` | `({ type, message, ... })` | Non-fatal issue detected. `type: "invalidMenuSelection"` when a menu selection doesn't match any item (dropped to prevent WASM crash). |
 | `rawCallback` | `(name, args)` | Every WASM window-port callback (escape hatch for anything not covered above) |
 
 ## Exported Constants
