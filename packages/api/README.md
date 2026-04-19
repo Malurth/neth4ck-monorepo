@@ -296,6 +296,16 @@ Property names match the C enum: `FIRE_RES`, `COLD_RES`, `SLEEP_RES`, `DISINT_RE
 
 These read live WASM memory — call during input prompts or after events when the game is suspended.
 
+### Warned Monsters
+
+When `WARN_OF_MON` is active, `warnedMonsters` tells you *what* the player is warned about:
+
+```js
+game.warnedMonsters   // string[] — e.g. ["orcs"] or ["humans", "elves"]
+```
+
+Sources include artifact warnings (Sting/Orcrist → orcs, Grimtooth → elves) and polymorph-based awareness (vampire → humans + elves, purple worm → shriekers). Returns an empty array when no warn targets are set.
+
 ### Messages
 
 ```js

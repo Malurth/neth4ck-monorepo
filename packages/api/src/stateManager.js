@@ -438,6 +438,27 @@ export class NethackStateManager {
     }
 
     /**
+     * Monster types/species the player is currently warned about via
+     * WARN_OF_MON. Returns an array of human-readable strings such as
+     * ["orcs", "elves"]. Returns an empty array when WARN_OF_MON is not
+     * active or when no specific warning targets are set.
+     *
+     * Sources include artifact warnings (e.g. Sting warns of orcs) and
+     * polymorph-based awareness (e.g. vampires sense humans and elves).
+     *
+     * This reads live WASM memory — call it when the game is suspended.
+     */
+    get warnedMonsters() {
+        const mod = this._ctx.module;
+        if (!mod?._get_warntype_text || !mod.UTF8ToString) return [];
+        const ptr = mod._get_warntype_text();
+        if (!ptr) return [];
+        const text = mod.UTF8ToString(ptr);
+        if (!text) return [];
+        return text.split(",");
+    }
+
+    /**
      * Monsters visible on the current map frame.
      * Each entry: { x, y, monsterIndex, name, isPet, isRidden, isDetected }
      * Updated on each mapUpdate event.
