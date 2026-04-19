@@ -267,6 +267,35 @@ game.conditions   // Set<string> — e.g. Set { "blind", "conf" }
 
 Possible values: `"stone"`, `"slime"`, `"strngl"`, `"foodpois"`, `"termill"`, `"blind"`, `"deaf"`, `"stun"`, `"conf"`, `"hallu"`, `"lev"`, `"fly"`, `"ride"`
 
+3.7 adds: `"bareh"`, `"busy"`, `"elf_iron"`, `"glowhands"`, `"grab"`, `"held"`, `"holding"`, `"icy"`, `"inlava"`, `"parlyz"`, `"sleeping"`, `"slippery"`, `"submerged"`, `"tethered"`, `"trapped"`, `"unconsc"`, `"woundedl"`
+
+### Properties (Intrinsics & Extrinsics)
+
+The full player property system — resistances, senses, movement modes, and more. These go far beyond conditions, covering everything NetHack tracks in `u.uprops[]`.
+
+```js
+// All properties with full detail
+game.properties   // Map<string, { index, intrinsic, extrinsic, blocked, active }>
+
+game.properties.get("FIRE_RES")
+// {
+//   index: 1,           — enum index in u.uprops[]
+//   intrinsic: 67108864, — bitmask: FROMOUTSIDE, FROMRACE, timeout, etc.
+//   extrinsic: 0,       — bitmask: which worn item slots grant this
+//   blocked: 0,         — bitmask: which items/situations block this
+//   active: true,       — true when (intrinsic || extrinsic) && !blocked
+// }
+
+// Convenience: just the active property names
+game.activeProperties   // Set<string> — e.g. Set { "FIRE_RES", "SEE_INVIS", "STEALTH" }
+```
+
+Property names match the C enum: `FIRE_RES`, `COLD_RES`, `SLEEP_RES`, `DISINT_RES`, `SHOCK_RES`, `POISON_RES`, `ACID_RES`, `STONE_RES`, `DRAIN_RES`, `SICK_RES`, `INVULNERABLE`, `ANTIMAGIC`, `STUNNED`, `CONFUSION`, `BLINDED`, `DEAF`, `SICK`, `STONED`, `STRANGLED`, `VOMITING`, `GLIB`, `SLIMED`, `HALLUC`, `HALLUC_RES`, `FUMBLING`, `WOUNDED_LEGS`, `SLEEPY`, `HUNGER`, `SEE_INVIS`, `TELEPAT`, `WARNING`, `WARN_OF_MON`, `WARN_UNDEAD`, `SEARCHING`, `CLAIRVOYANT`, `INFRAVISION`, `DETECT_MONSTERS`, `ADORNED`, `INVIS`, `DISPLACED`, `STEALTH`, `AGGRAVATE_MONSTER`, `CONFLICT`, `JUMPING`, `TELEPORT`, `TELEPORT_CONTROL`, `LEVITATION`, `FLYING`, `WWALKING`, `SWIMMING`, `MAGICAL_BREATHING`, `PASSES_WALLS`, `SLOW_DIGESTION`, `HALF_SPDAM`, `HALF_PHDAM`, `REGENERATION`, `ENERGY_REGENERATION`, `PROTECTION`, `PROT_FROM_SHAPE_CHANGERS`, `POLYMORPH`, `POLYMORPH_CONTROL`, `UNCHANGING`, `FAST`, `REFLECTING`, `FREE_ACTION`, `FIXED_ABIL`, `LIFESAVED`
+
+3.7 also includes `BLND_RES`.
+
+These read live WASM memory — call during input prompts or after events when the game is suspended.
+
 ### Messages
 
 ```js

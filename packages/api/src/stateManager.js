@@ -389,6 +389,55 @@ export class NethackStateManager {
     }
 
     /**
+     * Player properties (intrinsics/extrinsics) read from u.uprops[].
+     * Returns a Map<string, { index, intrinsic, extrinsic, blocked, active }>
+     * where the key is the property name (e.g. "FIRE_RES", "FLYING").
+     * `active` is true when intrinsic or extrinsic is set and not blocked.
+     * Returns null if WASM data is not yet available.
+     *
+     * This reads live WASM memory — call it when the game is suspended
+     * (during input prompts or after events).
+     */
+    get properties() {
+        const mod = this._ctx.module;
+        const ng = this._ctx.ng;
+        const propConsts = ng?.constants?.PROP;
+        const ps = ng?.constants?.PROP_STRUCT;
+        if (!mod || !propConsts || !ps || !mod._get_uprops_ptr || !mod.getValue) {
+            return null;
+        }
+
+        const base = mod._get_uprops_ptr();
+        if (!base) return null;
+
+        const props = new Map();
+        for (const [name, index] of Object.entries(propConsts)) {
+            const addr = base + index * ps.SIZEOF;
+            const extrinsic = mod.getValue(addr + ps.EXTRINSIC, "i32");
+            const blocked = mod.getValue(addr + ps.BLOCKED, "i32");
+            const intrinsic = mod.getValue(addr + ps.INTRINSIC, "i32");
+            const active = (intrinsic !== 0 || extrinsic !== 0) && blocked === 0;
+            props.set(name, Object.freeze({ index, intrinsic, extrinsic, blocked, active }));
+        }
+        return props;
+    }
+
+    /**
+     * Convenience: returns a Set of property names that are currently active
+     * (have an intrinsic or extrinsic source and are not blocked).
+     * Returns null if WASM data is not yet available.
+     */
+    get activeProperties() {
+        const all = this.properties;
+        if (!all) return null;
+        const active = new Set();
+        for (const [name, prop] of all) {
+            if (prop.active) active.add(name);
+        }
+        return active;
+    }
+
+    /**
      * Monsters visible on the current map frame.
      * Each entry: { x, y, monsterIndex, name, isPet, isRidden, isDetected }
      * Updated on each mapUpdate event.
