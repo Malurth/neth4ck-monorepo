@@ -750,6 +750,11 @@ export class NethackStateManager {
      */
     quit() {
         this._emitAction({ action: "quit" });
+        if (this.phase === "gameOver") {
+            // Re-emit so any listeners resolve
+            this._emitter.emit("phaseChange", "gameOver");
+            return Promise.resolve();
+        }
         if (this._ctx.inputInterceptor) {
             return Promise.reject(
                 new Error("another input sequence is already in progress")
