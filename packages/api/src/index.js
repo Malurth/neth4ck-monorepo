@@ -18,5 +18,18 @@ export {
     TERRAIN_TYPE_CHARS,
     TERRAIN_TYPE_NAMES,
 } from "./constants.js";
+export {
+    ALL_ALIGNS,
+    ALL_GENDERS,
+    ALL_RACES,
+    ALL_ROLES,
+    RACE_CONSTRAINTS,
+    ROLE_CONSTRAINTS,
+    getValidAlignments,
+    getValidGenders,
+    getValidRaces,
+    getValidRoles,
+    validateCharacterOptions,
+} from "./characterConstraints.js";
 export { EventEmitter } from "./eventEmitter.js";
 export { NethackStateManager } from "./stateManager.js";

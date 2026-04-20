@@ -1,6 +1,7 @@
 import nethackStart from "@neth4ck/neth4ck";
 
 import { createCallbackRouter } from "./callbackRouter.js";
+import { validateCharacterOptions } from "./characterConstraints.js";
 import { ACTION_KEYS, DIRECTIONS, EXTENDED_COMMANDS } from "./constants.js";
 import { EventEmitter } from "./eventEmitter.js";
 import { createRingBuffer } from "./ringBuffer.js";
@@ -90,6 +91,14 @@ export class NethackStateManager {
             options: extraOptions,
             ...gameOptions
         } = nethackOptions ?? {};
+
+        // Validate character options before passing to WASM.
+        const validation = validateCharacterOptions({ role, race, align, gender });
+        if (!validation.valid) {
+            throw new Error(
+                `Invalid character options: ${validation.errors.join("; ")}`
+            );
+        }
 
         // Build NETHACKOPTIONS parts from birth options + general options.
         // These are appended to the NETHACKOPTIONS env var via a preRun hook,

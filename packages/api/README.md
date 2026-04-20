@@ -99,6 +99,8 @@ await game.start(createModule, {
 
 The startup sequence (character selection, name entry, intro text, tutorial) is handled automatically before `start()` resolves. When restoring from a save, character creation is skipped and the game resumes directly. Set `skipTutorial: false` to have the tutorial menu forwarded via `inputRequired` instead.
 
+Character options (`role`, `race`, `gender`, `align`) are validated against NetHack's constraint tables before booting WASM. Invalid combinations (e.g. Elf Healer, Chaotic Knight) throw an `Error` with descriptive messages instead of silently falling back to defaults. Use `validateCharacterOptions()` to check before calling `start()`, or use the `getValid*` helpers to build a UI that only offers legal choices.
+
 ### Advanced: Emscripten Module Config
 
 All unrecognized properties in `moduleOptions` are forwarded to the Emscripten Module. This includes `preRun` hooks for low-level setup. For NETHACKOPTIONS, prefer `nethackOptions.options` instead. For save persistence, prefer the built-in `saves` and `saveDir` options.
@@ -491,6 +493,54 @@ game.off(event, callback);
 | `warning` | `({ type, message, ... })` | Non-fatal issue detected. `type: "invalidMenuSelection"` when a menu selection doesn't match any item (dropped to prevent WASM crash). |
 | `rawCallback` | `(name, args)` | Every WASM window-port callback (escape hatch for anything not covered above) |
 
+## Character Constraints
+
+Helpers for validating NetHack's role/race/alignment/gender restrictions. Use these to build dynamic character creation UIs that prevent invalid combinations.
+
+```js
+import {
+    ROLE_CONSTRAINTS,       // { arc: { label, races, aligns }, hea: { ... }, ... }
+    RACE_CONSTRAINTS,       // { hum: { label, aligns }, elf: { ... }, ... }
+    getValidRaces,          // (role?) → RaceCode[]
+    getValidAlignments,     // (role?, race?) → AlignCode[]
+    getValidGenders,        // (role?) → GenderCode[]
+    getValidRoles,          // ({ race?, align?, gender? }) → RoleCode[]
+    validateCharacterOptions, // ({ role?, race?, align?, gender? }) → { valid, errors[] }
+} from "@neth4ck/api";
+```
+
+### Filtering Options
+
+Each helper returns the valid codes given the current selection state:
+
+```js
+getValidRaces("hea");              // ["hum", "gno"] — Healer can only be Human or Gnome
+getValidAlignments("hea");         // ["neu"]        — Healer must be Neutral
+getValidAlignments("ran", "orc");  // ["cha"]        — Ranger+Orc narrows to Chaotic
+getValidGenders("val");            // ["fem"]        — Valkyrie is female-only
+getValidRoles({ race: "elf" });    // ["pri", "ran", "wiz"] — only these roles allow Elf
+```
+
+### Validation
+
+`validateCharacterOptions()` checks a full combination and returns descriptive errors:
+
+```js
+validateCharacterOptions({ role: "hea", race: "elf", align: "cha" });
+// {
+//   valid: false,
+//   errors: [
+//     "Healer cannot be Elf",
+//     "Healer cannot be Chaotic",
+//   ]
+// }
+
+validateCharacterOptions({ role: "val", race: "dwa", align: "law", gender: "fem" });
+// { valid: true, errors: [] }
+```
+
+`start()` calls this internally and throws if the combination is invalid — no more silent fallback to random characters.
+
 ## Exported Constants
 
 ```js
@@ -511,6 +561,14 @@ import {
     // Display
     COLORS,             // { BLACK: 0, RED: 1, ..., WHITE: 15 }
     ATTR,               // { NONE: 0, BOLD: 1, DIM: 2, ULINE: 4, BLINK: 5, INVERSE: 7 }
+
+    // Character constraints
+    ROLE_CONSTRAINTS,   // { arc: { label, races, aligns }, ... }
+    RACE_CONSTRAINTS,   // { hum: { label, aligns }, ... }
+    ALL_ROLES,          // ["arc", "bar", "cav", ...]
+    ALL_RACES,          // ["hum", "elf", "dwa", "gno", "orc"]
+    ALL_ALIGNS,         // ["law", "neu", "cha"]
+    ALL_GENDERS,        // ["mal", "fem"]
 
     // Enums
     STATUS_FIELDS,      // ["title", "hp", "hpMax", ...]
