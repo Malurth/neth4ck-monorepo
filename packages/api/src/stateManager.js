@@ -469,7 +469,7 @@ export class NethackStateManager {
 
     /**
      * Monsters visible on the current map frame.
-     * Each entry: { x, y, monsterIndex, name, isPet, isRidden, isDetected }
+     * Each entry: { x, y, monsterIndex, name, isPet, isRidden, isDetected, m_id?, givenName? }
      * Updated on each mapUpdate event.
      */
     get visibleMonsters() {
@@ -1660,12 +1660,18 @@ export class NethackStateManager {
 
     _refreshGivenNames() {
         const getGivenName = this._module?._get_monster_givenname;
-        if (!getGivenName || !this._module?.UTF8ToString) return;
+        const getMonsterId = this._module?._get_monster_m_id;
         for (const mon of this._ctx.state.visibleMonsters) {
-            const ptr = getGivenName(mon.x, mon.y);
-            if (ptr) {
-                const gname = this._module.UTF8ToString(ptr);
-                mon.givenName = gname || undefined;
+            if (getGivenName && this._module?.UTF8ToString) {
+                const ptr = getGivenName(mon.x, mon.y);
+                if (ptr) {
+                    const gname = this._module.UTF8ToString(ptr);
+                    mon.givenName = gname || undefined;
+                }
+            }
+            if (getMonsterId) {
+                const mid = getMonsterId(mon.x, mon.y);
+                if (mid) mon.m_id = mid;
             }
         }
     }

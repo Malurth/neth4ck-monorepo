@@ -445,14 +445,20 @@ export function createCallbackRouter(ctx) {
                     state.visibleMonsters = Array.from(monstersByPosition.values());
 
                     // Enrich monsters with given names (pet names, #named monsters)
+                    // and unique m_id for stable identity tracking across turns.
                     const getGivenName = ctx.module?._get_monster_givenname;
-                    if (getGivenName && ctx.module?.UTF8ToString) {
-                        for (const mon of state.visibleMonsters) {
+                    const getMonsterId = ctx.module?._get_monster_m_id;
+                    for (const mon of state.visibleMonsters) {
+                        if (getGivenName && ctx.module?.UTF8ToString) {
                             const ptr = getGivenName(mon.x, mon.y);
                             if (ptr) {
                                 const gname = ctx.module.UTF8ToString(ptr);
                                 if (gname) mon.givenName = gname;
                             }
+                        }
+                        if (getMonsterId) {
+                            const mid = getMonsterId(mon.x, mon.y);
+                            if (mid) mon.m_id = mid;
                         }
                     }
 

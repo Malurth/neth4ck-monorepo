@@ -351,7 +351,9 @@ game.monsters[0]
 
 // Monsters visible on the current map frame
 game.visibleMonsters
-// [{ x, y, monsterIndex, name, isPet, isRidden, isDetected }, ...]
+// [{ x, y, monsterIndex, name, isPet, isRidden, isDetected, m_id?, givenName? }, ...]
+// m_id: unique monster ID from the C engine — stable across turns within a game session
+// givenName: player-assigned or role-default name (e.g. pet name)
 ```
 
 ### Visible Items & Features
