@@ -1239,7 +1239,7 @@ export class NethackStateManager {
                 this._emitAction({ action: "menuDismiss", promptQuery: this._ctx.state.activeMenu?.prompt || this._ctx.state.pendingInput?.query || "" });
                 this.dismissMenu();
             } else {
-                this._emitAction({ action: "menuSelect", key, promptQuery: this._ctx.state.activeMenu?.prompt || this._ctx.state.pendingInput?.query || "", itemName: this._resolveItemName(key) });
+                this._emitAction({ action: "menuSelect", key, promptQuery: this._ctx.state.activeMenu?.prompt || this._ctx.state.pendingInput?.query || "" });
                 this.selectMenuItem(key);
             }
         } else {
