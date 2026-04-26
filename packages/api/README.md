@@ -233,6 +233,17 @@ Each tile: `{ glyph, bkglyph, tileIndex, ch, color, special, x, y, tileType, til
 
 `tileLabel` provides a descriptive name for statues and corpses (e.g., `"statue of goblin"`, `"goblin corpse"`). `null` for other tile types.
 
+### Character Identity
+
+```js
+game.playerName  // "Rodney" — the name as known by the C engine (from plname)
+game.role        // "Valkyrie" — role/class name (from pl_character)
+game.race        // "Human" — race name (from flags.initrace)
+game.gender      // "Female" — gender (from flags.initgend)
+```
+
+These read live WASM memory via `nethackGlobal.globals`. Available after `start()` resolves.
+
 ### Player Status
 
 ```js

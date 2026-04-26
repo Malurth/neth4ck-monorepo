@@ -336,6 +336,13 @@ export class NethackStateManager {
         return this._ctx.state.conditions;
     }
 
+    /** Player's name as known by the C engine (e.g. "Gandalf").
+     *  Read from the C global `plname` via nethackGlobal. */
+    get playerName() {
+        const g = this._ctx.ng?.globals;
+        return g?.svp?.plname ?? g?.plname ?? null;
+    }
+
     /** Player's role/class name (e.g. "Barbarian", "Wizard").
      *  Read from the C global `pl_character` via nethackGlobal. */
     get role() {
