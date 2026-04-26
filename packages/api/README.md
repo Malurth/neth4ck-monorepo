@@ -361,13 +361,17 @@ game.visibleMonsters
 Updated on each `mapUpdate` — no need to scan the full map yourself:
 
 ```js
-// Items on the floor (objects, statues, corpses)
+// Items on the floor (objects, statues, corpses) — includes full piles
 game.visibleItems
 // [{ x, y, ch, color, glyph, tileType, tileLabel, category, obscured }, ...]
 //   tileType: "object", "statue", or "corpse"
 //   tileLabel: descriptive name for statues/corpses (e.g. "goblin corpse")
 //   category: item category string (e.g. "weapon", "potion")
-//   obscured: true if hidden under another glyph (e.g. monster standing on item)
+//   obscured: true if hidden under another glyph (monster/player on top, or
+//             buried in a pile beneath the top item). Multiple items at the
+//             same position appear as separate entries — the pile top has
+//             obscured=false (unless a monster/player is on top), and items
+//             beneath have obscured=true.
 
 // Notable features (stairs, fountains, altars, etc.)
 game.visibleFeatures

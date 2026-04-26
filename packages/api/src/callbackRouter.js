@@ -320,21 +320,26 @@ export function createCallbackRouter(ctx) {
 
                 // Track visible items (objects, statues, corpses).
                 // Persistent: items stay until position is explicitly cleared.
+                // Each position stores an array of items (full pile).
+                // The glyph system only shows the topmost item; the floor
+                // object scan in shim_display_nhwindow backfills the rest.
                 const isItem = (t) => t === "object" || t === "statue" || t === "corpse";
                 if (isItem(tileType)) {
                     const charStr = ch ? String.fromCharCode(ch) : "";
-                    itemsByPosition.set(posKey, {
+                    itemsByPosition.set(posKey, [{
                         x, y, ch: charStr, color, glyph, tileType, tileLabel,
                         category: ITEM_CATEGORY_BY_CHAR[charStr] || "item",
                         obscured: false,
-                    });
+                    }]);
                 } else if (tileType === "feature" || tileType === "nothing"
                         || tileType === "unexplored" || tileType === null) {
                     // Position is now plain terrain/empty — item is gone
                     itemsByPosition.delete(posKey);
                 } else if (itemsByPosition.has(posKey)) {
-                    // Something else drawn on top (monster, player) — mark obscured
-                    itemsByPosition.get(posKey).obscured = true;
+                    // Something else drawn on top (monster, player) — mark all obscured
+                    for (const item of itemsByPosition.get(posKey)) {
+                        item.obscured = true;
+                    }
                 }
 
                 // Track visible features (stairs, fountains, altars, etc.).
@@ -462,7 +467,80 @@ export function createCallbackRouter(ctx) {
                         }
                     }
 
-                    state.visibleItems = Array.from(itemsByPosition.values());
+                    // Floor object scan: enumerate full item piles from C.
+                    // The glyph system only shows the topmost item per tile.
+                    // This scan queries level.objects[x][y] via get_floor_objects
+                    // to find all items at positions that could have obscured items:
+                    // monster/player tiles and item tiles (piles).
+                    const getFloorObjects = ctx.module?._get_floor_objects;
+                    if (getFloorObjects && ctx.module._malloc && ctx.module._free) {
+                        const BYTES_PER_OBJ = 8;
+                        const MAX_OBJS = 32;
+                        const bufPtr = ctx.module._malloc(BYTES_PER_OBJ * MAX_OBJS);
+                        const glyphConsts = ctx.ng?.constants?.GLYPH;
+
+                        // Collect all positions to scan (monsters + items)
+                        const positionsToScan = new Set();
+                        for (const posKey of monstersByPosition.keys()) {
+                            positionsToScan.add(posKey);
+                        }
+                        for (const posKey of itemsByPosition.keys()) {
+                            positionsToScan.add(posKey);
+                        }
+
+                        for (const posKey of positionsToScan) {
+                            const [xStr, yStr] = posKey.split(",");
+                            const px = parseInt(xStr, 10);
+                            const py = parseInt(yStr, 10);
+
+                            const objCount = getFloorObjects(px, py, bufPtr, MAX_OBJS);
+                            if (objCount > 0) {
+                                const items = [];
+                                const HEAPU8 = ctx.module.HEAPU8;
+                                const dv = new DataView(HEAPU8.buffer);
+                                const hasMonster = monstersByPosition.has(posKey);
+
+                                for (let i = 0; i < objCount; i++) {
+                                    const off = bufPtr + i * BYTES_PER_OBJ;
+                                    const objGlyph = dv.getInt32(off, true);
+                                    const objCh = HEAPU8[off + 4];
+                                    const objColor = HEAPU8[off + 5];
+                                    const charStr = objCh ? String.fromCharCode(objCh) : "";
+
+                                    const objTileType = classifyGlyph(objGlyph, glyphConsts);
+                                    let objTileLabel = null;
+                                    if ((objTileType === "statue" || objTileType === "corpse") && glyphConsts) {
+                                        const offKey = objTileType === "statue" ? "GLYPH_STATUE_OFF" : "GLYPH_BODY_OFF";
+                                        const monIdx = (objGlyph - glyphConsts[offKey]) % glyphConsts.NUMMONS;
+                                        const monster = state.monsters?.[monIdx];
+                                        if (monster) {
+                                            objTileLabel = objTileType === "statue"
+                                                ? `statue of ${monster.name}`
+                                                : `${monster.name} corpse`;
+                                        }
+                                    }
+
+                                    // If a monster/player is on this tile, all items are obscured.
+                                    // Otherwise, only the top item (i=0) is visible.
+                                    const obscured = hasMonster ? true : i > 0;
+                                    items.push({
+                                        x: px, y: py, ch: charStr, color: objColor,
+                                        glyph: objGlyph, tileType: objTileType,
+                                        tileLabel: objTileLabel,
+                                        category: ITEM_CATEGORY_BY_CHAR[charStr] || "item",
+                                        obscured,
+                                    });
+                                }
+                                itemsByPosition.set(posKey, items);
+                            } else if (itemsByPosition.has(posKey)) {
+                                // C says no items here — remove stale glyph-tracked entry
+                                itemsByPosition.delete(posKey);
+                            }
+                        }
+                        ctx.module._free(bufPtr);
+                    }
+
+                    state.visibleItems = Array.from(itemsByPosition.values()).flat();
                     state.visibleFeatures = Array.from(featuresByPosition.values());
                     emitter.emit("mapUpdate", state.map);
                     if (state.visibleMonsters.length > 0) {
