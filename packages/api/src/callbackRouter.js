@@ -36,6 +36,19 @@ function classifyGlyph(glyph, gc) {
             [gc.GLYPH_WARNING_OFF, "warning"],
             [gc.GLYPH_STATUE_OFF, "statue"],
         ];
+        // 3.7 has piletop glyph variants above the statue range
+        if (gc.GLYPH_OBJ_PILETOP_OFF !== undefined) {
+            ranges.push([gc.GLYPH_OBJ_PILETOP_OFF, "object"]);
+        }
+        if (gc.GLYPH_BODY_PILETOP_OFF !== undefined) {
+            ranges.push([gc.GLYPH_BODY_PILETOP_OFF, "corpse"]);
+        }
+        if (gc.GLYPH_STATUE_MALE_PILETOP_OFF !== undefined) {
+            ranges.push([gc.GLYPH_STATUE_MALE_PILETOP_OFF, "statue"]);
+        }
+        if (gc.GLYPH_STATUE_FEM_PILETOP_OFF !== undefined) {
+            ranges.push([gc.GLYPH_STATUE_FEM_PILETOP_OFF, "statue"]);
+        }
         if (gc.GLYPH_UNEXPLORED_OFF !== undefined) {
             ranges.push([gc.GLYPH_UNEXPLORED_OFF, "unexplored"]);
         }
@@ -49,6 +62,37 @@ function classifyGlyph(glyph, gc) {
         if (glyph >= offset) return type;
     }
     return null;
+}
+
+/**
+ * For a glyph classified as "statue" or "corpse", return the correct
+ * base offset to subtract when computing the monster index.
+ * Handles 3.7's piletop variants (which live in separate glyph ranges).
+ */
+function statueCorpseOffset(glyph, tileType, gc) {
+    if (!gc) return 0;
+    if (tileType === "corpse") {
+        if (gc.GLYPH_BODY_PILETOP_OFF !== undefined
+            && glyph >= gc.GLYPH_BODY_PILETOP_OFF
+            && (gc.GLYPH_STATUE_MALE_PILETOP_OFF === undefined
+                || glyph < gc.GLYPH_STATUE_MALE_PILETOP_OFF)) {
+            return gc.GLYPH_BODY_PILETOP_OFF;
+        }
+        return gc.GLYPH_BODY_OFF;
+    }
+    // statue
+    if (gc.GLYPH_STATUE_FEM_PILETOP_OFF !== undefined
+        && glyph >= gc.GLYPH_STATUE_FEM_PILETOP_OFF
+        && (gc.GLYPH_UNEXPLORED_OFF === undefined
+            || glyph < gc.GLYPH_UNEXPLORED_OFF)) {
+        return gc.GLYPH_STATUE_FEM_PILETOP_OFF;
+    }
+    if (gc.GLYPH_STATUE_MALE_PILETOP_OFF !== undefined
+        && glyph >= gc.GLYPH_STATUE_MALE_PILETOP_OFF
+        && glyph < (gc.GLYPH_STATUE_FEM_PILETOP_OFF ?? Infinity)) {
+        return gc.GLYPH_STATUE_MALE_PILETOP_OFF;
+    }
+    return gc.GLYPH_STATUE_OFF;
 }
 
 /**
@@ -285,8 +329,8 @@ export function createCallbackRouter(ctx) {
                 const tileType = classifyGlyph(glyph, glyphConstants);
                 let tileLabel = null;
                 if ((tileType === "statue" || tileType === "corpse") && glyphConstants) {
-                    const offKey = tileType === "statue" ? "GLYPH_STATUE_OFF" : "GLYPH_BODY_OFF";
-                    const monIdx = (glyph - glyphConstants[offKey]) % glyphConstants.NUMMONS;
+                    const baseOff = statueCorpseOffset(glyph, tileType, glyphConstants);
+                    const monIdx = (glyph - baseOff) % glyphConstants.NUMMONS;
                     const monster = state.monsters?.[monIdx];
                     if (monster) {
                         tileLabel = tileType === "statue"
@@ -510,8 +554,8 @@ export function createCallbackRouter(ctx) {
                                     const objTileType = classifyGlyph(objGlyph, glyphConsts);
                                     let objTileLabel = null;
                                     if ((objTileType === "statue" || objTileType === "corpse") && glyphConsts) {
-                                        const offKey = objTileType === "statue" ? "GLYPH_STATUE_OFF" : "GLYPH_BODY_OFF";
-                                        const monIdx = (objGlyph - glyphConsts[offKey]) % glyphConsts.NUMMONS;
+                                        const baseOff = statueCorpseOffset(objGlyph, objTileType, glyphConsts);
+                                        const monIdx = (objGlyph - baseOff) % glyphConsts.NUMMONS;
                                         const monster = state.monsters?.[monIdx];
                                         if (monster) {
                                             objTileLabel = objTileType === "statue"
@@ -562,14 +606,32 @@ export function createCallbackRouter(ctx) {
 
                                     const remTileType = classifyGlyph(remGlyph, glyphConsts);
                                     let remTileLabel = null;
+                                    let category = ITEM_CATEGORY_BY_CHAR[charStr] || "item";
+
                                     if ((remTileType === "statue" || remTileType === "corpse") && glyphConsts) {
-                                        const offKey = remTileType === "statue" ? "GLYPH_STATUE_OFF" : "GLYPH_BODY_OFF";
-                                        const monIdx = (remGlyph - glyphConsts[offKey]) % glyphConsts.NUMMONS;
+                                        const baseOff = statueCorpseOffset(remGlyph, remTileType, glyphConsts);
+                                        const monIdx = (remGlyph - baseOff) % glyphConsts.NUMMONS;
                                         const monster = state.monsters?.[monIdx];
                                         if (monster) {
                                             remTileLabel = remTileType === "statue"
                                                 ? `statue of ${monster.name}`
                                                 : `${monster.name} corpse`;
+                                        }
+                                    } else if (remTileType === "feature" || remTileType === "trap"
+                                               || remTileType === "warning") {
+                                        // Use get_screen_description for features/traps —
+                                        // it reads levl[x][y].glyph for out-of-sight tiles,
+                                        // giving us the proper name (e.g. "closed door", "fountain").
+                                        const getDesc = ctx.module?._get_screen_description;
+                                        if (getDesc) {
+                                            const descPtr = getDesc(remX, remY);
+                                            if (descPtr) {
+                                                const desc = ctx.module.UTF8ToString(descPtr);
+                                                if (desc) {
+                                                    remTileLabel = desc;
+                                                    category = desc;
+                                                }
+                                            }
                                         }
                                     }
 
@@ -577,7 +639,7 @@ export function createCallbackRouter(ctx) {
                                         x: remX, y: remY, ch: charStr, color: remColor,
                                         glyph: remGlyph, tileType: remTileType,
                                         tileLabel: remTileLabel,
-                                        category: ITEM_CATEGORY_BY_CHAR[charStr] || "item",
+                                        category,
                                         remembered: true,
                                     });
                                 }
