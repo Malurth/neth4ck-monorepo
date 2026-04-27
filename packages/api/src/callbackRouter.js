@@ -538,6 +538,53 @@ export function createCallbackRouter(ctx) {
                             }
                         }
                         ctx.module._free(bufPtr);
+
+                        // Remembered-item scan: items the hero previously saw
+                        // but can no longer see (out of line-of-sight).
+                        // Uses levl[x][y].glyph from the C memory layer.
+                        const getRememberedItems = ctx.module?._get_remembered_items;
+                        if (getRememberedItems) {
+                            const MAX_REMEMBERED = 128;
+                            const remBufPtr = ctx.module._malloc(BYTES_PER_OBJ * MAX_REMEMBERED);
+                            const remCount = getRememberedItems(remBufPtr, MAX_REMEMBERED);
+                            const remembered = [];
+                            if (remCount > 0) {
+                                const HEAPU8 = ctx.module.HEAPU8;
+                                const dv = new DataView(HEAPU8.buffer);
+                                for (let i = 0; i < remCount; i++) {
+                                    const off = remBufPtr + i * BYTES_PER_OBJ;
+                                    const remGlyph = dv.getInt32(off, true);
+                                    const remCh = HEAPU8[off + 4];
+                                    const remColor = HEAPU8[off + 5];
+                                    const remX = HEAPU8[off + 6];
+                                    const remY = HEAPU8[off + 7];
+                                    const charStr = remCh ? String.fromCharCode(remCh) : "";
+
+                                    const remTileType = classifyGlyph(remGlyph, glyphConsts);
+                                    let remTileLabel = null;
+                                    if ((remTileType === "statue" || remTileType === "corpse") && glyphConsts) {
+                                        const offKey = remTileType === "statue" ? "GLYPH_STATUE_OFF" : "GLYPH_BODY_OFF";
+                                        const monIdx = (remGlyph - glyphConsts[offKey]) % glyphConsts.NUMMONS;
+                                        const monster = state.monsters?.[monIdx];
+                                        if (monster) {
+                                            remTileLabel = remTileType === "statue"
+                                                ? `statue of ${monster.name}`
+                                                : `${monster.name} corpse`;
+                                        }
+                                    }
+
+                                    remembered.push({
+                                        x: remX, y: remY, ch: charStr, color: remColor,
+                                        glyph: remGlyph, tileType: remTileType,
+                                        tileLabel: remTileLabel,
+                                        category: ITEM_CATEGORY_BY_CHAR[charStr] || "item",
+                                        remembered: true,
+                                    });
+                                }
+                            }
+                            state.rememberedItems = remembered;
+                            ctx.module._free(remBufPtr);
+                        }
                     }
 
                     state.visibleItems = Array.from(itemsByPosition.values()).flat();

@@ -71,6 +71,7 @@ export class NethackStateManager {
             monsters: null,
             visibleMonsters: [],
             visibleItems: [],
+            rememberedItems: [],
             visibleFeatures: [],
         };
         this._pendingDirectionalAction = null;
@@ -490,6 +491,16 @@ export class NethackStateManager {
      */
     get visibleItems() {
         return this._ctx.state.visibleItems;
+    }
+
+    /**
+     * Items the hero previously saw but can no longer see (out of line-of-sight).
+     * Sourced from NetHack's remembered glyph layer (levl[x][y].glyph).
+     * Each entry: { x, y, ch, color, glyph, tileType, tileLabel, category, remembered: true }
+     * Updated on each mapUpdate event.
+     */
+    get rememberedItems() {
+        return this._ctx.state.rememberedItems;
     }
 
     /**
