@@ -587,7 +587,7 @@ export function createCallbackRouter(ctx) {
                                         category: ITEM_CATEGORY_BY_CHAR[charStr] || "item",
                                         obscured,
                                         o_id: objOid,
-                                        dknown: objDknown ? true : false,
+                                        nameKnown: objDknown ? true : false,
                                         ...(objName ? { name: objName } : {}),
                                     });
                                 }

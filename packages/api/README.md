@@ -374,7 +374,7 @@ Updated on each `mapUpdate` — no need to scan the full map yourself:
 ```js
 // Items on the floor (objects, statues, corpses) — includes full piles
 game.visibleItems
-// [{ x, y, ch, color, glyph, tileType, tileLabel, category, obscured, o_id, dknown, name? }, ...]
+// [{ x, y, ch, color, glyph, tileType, tileLabel, category, obscured, o_id, nameKnown, name? }, ...]
 //   tileType: "object", "statue", or "corpse"
 //   tileLabel: descriptive name for statues/corpses (e.g. "goblin corpse")
 //   category: item category string (e.g. "weapon", "potion")
@@ -382,7 +382,9 @@ game.visibleItems
 //         within a game session). Use to track item identity across turns
 //         even when the display name changes (e.g. "a weapon" → "11 arrows").
 //         0 for glyph-only entries before the floor scan backfills.
-//   dknown: true if player has examined item up close (at feet or in inventory).
+//   nameKnown: true if the game has revealed this item's specific name to the
+//         player (stepped on it, picked it up, nearby farlook, etc.). When false,
+//         the name may be generic; when true, it's the real identity.
 //   name: player-perceived item name from the C engine (e.g. "a large box",
 //         "11 arrows", "a scroll labeled ZELGO MER"). Equivalent to what
 //         the farlook command (;) would show. Absent for glyph-only entries
