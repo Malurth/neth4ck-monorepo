@@ -486,7 +486,10 @@ export class NethackStateManager {
 
     /**
      * Items visible on the current map frame (objects, statues, corpses).
-     * Each entry: { x, y, ch, color, glyph, tileType, tileLabel, category }
+     * Each entry: { x, y, ch, color, glyph, tileType, tileLabel, category, obscured, o_id, dknown, name? }
+     * o_id: unique object identity from C engine (never reused).
+     * dknown: true if player has examined item up close (at feet or in inventory).
+     * name: player-perceived item name from C (e.g. "11 arrows"); absent for glyph-only entries.
      * Updated on each mapUpdate event.
      */
     get visibleItems() {

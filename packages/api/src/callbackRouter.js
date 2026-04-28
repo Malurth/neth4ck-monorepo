@@ -374,6 +374,7 @@ export function createCallbackRouter(ctx) {
                         x, y, ch: charStr, color, glyph, tileType, tileLabel,
                         category: ITEM_CATEGORY_BY_CHAR[charStr] || "item",
                         obscured: false,
+                        o_id: 0, // glyph-only; real o_id filled by floor scan
                     }]);
                 } else if (tileType === "feature" || tileType === "nothing"
                         || tileType === "unexplored" || tileType === null) {
@@ -518,9 +519,10 @@ export function createCallbackRouter(ctx) {
                     // monster/player tiles and item tiles (piles).
                     const getFloorObjects = ctx.module?._get_floor_objects;
                     if (getFloorObjects && ctx.module._malloc && ctx.module._free) {
-                        const BYTES_PER_OBJ = 8;
+                        const BYTES_PER_FLOOR_OBJ = 80;
+                        const BYTES_PER_REMEMBERED = 8;
                         const MAX_OBJS = 32;
-                        const bufPtr = ctx.module._malloc(BYTES_PER_OBJ * MAX_OBJS);
+                        const bufPtr = ctx.module._malloc(BYTES_PER_FLOOR_OBJ * MAX_OBJS);
                         const glyphConsts = ctx.ng?.constants?.GLYPH;
 
                         // Collect all positions to scan (monsters + items)
@@ -545,11 +547,22 @@ export function createCallbackRouter(ctx) {
                                 const hasMonster = monstersByPosition.has(posKey);
 
                                 for (let i = 0; i < objCount; i++) {
-                                    const off = bufPtr + i * BYTES_PER_OBJ;
+                                    const off = bufPtr + i * BYTES_PER_FLOOR_OBJ;
                                     const objGlyph = dv.getInt32(off, true);
                                     const objCh = HEAPU8[off + 4];
                                     const objColor = HEAPU8[off + 5];
+                                    const objDknown = HEAPU8[off + 6];
+                                    const objOid = dv.getUint32(off + 8, true);
                                     const charStr = objCh ? String.fromCharCode(objCh) : "";
+
+                                    // Read null-terminated name string from bytes [12-79]
+                                    let objName = null;
+                                    const nameStart = off + 12;
+                                    if (HEAPU8[nameStart] !== 0) {
+                                        let nameEnd = nameStart;
+                                        while (nameEnd < off + 80 && HEAPU8[nameEnd] !== 0) nameEnd++;
+                                        objName = new TextDecoder().decode(HEAPU8.slice(nameStart, nameEnd));
+                                    }
 
                                     const objTileType = classifyGlyph(objGlyph, glyphConsts);
                                     let objTileLabel = null;
@@ -573,6 +586,9 @@ export function createCallbackRouter(ctx) {
                                         tileLabel: objTileLabel,
                                         category: ITEM_CATEGORY_BY_CHAR[charStr] || "item",
                                         obscured,
+                                        o_id: objOid,
+                                        dknown: objDknown ? true : false,
+                                        ...(objName ? { name: objName } : {}),
                                     });
                                 }
                                 itemsByPosition.set(posKey, items);
@@ -589,14 +605,14 @@ export function createCallbackRouter(ctx) {
                         const getRememberedItems = ctx.module?._get_remembered_items;
                         if (getRememberedItems) {
                             const MAX_REMEMBERED = 128;
-                            const remBufPtr = ctx.module._malloc(BYTES_PER_OBJ * MAX_REMEMBERED);
+                            const remBufPtr = ctx.module._malloc(BYTES_PER_REMEMBERED * MAX_REMEMBERED);
                             const remCount = getRememberedItems(remBufPtr, MAX_REMEMBERED);
                             const remembered = [];
                             if (remCount > 0) {
                                 const HEAPU8 = ctx.module.HEAPU8;
                                 const dv = new DataView(HEAPU8.buffer);
                                 for (let i = 0; i < remCount; i++) {
-                                    const off = remBufPtr + i * BYTES_PER_OBJ;
+                                    const off = remBufPtr + i * BYTES_PER_REMEMBERED;
                                     const remGlyph = dv.getInt32(off, true);
                                     const remCh = HEAPU8[off + 4];
                                     const remColor = HEAPU8[off + 5];

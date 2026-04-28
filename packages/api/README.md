@@ -374,10 +374,19 @@ Updated on each `mapUpdate` — no need to scan the full map yourself:
 ```js
 // Items on the floor (objects, statues, corpses) — includes full piles
 game.visibleItems
-// [{ x, y, ch, color, glyph, tileType, tileLabel, category, obscured }, ...]
+// [{ x, y, ch, color, glyph, tileType, tileLabel, category, obscured, o_id, dknown, name? }, ...]
 //   tileType: "object", "statue", or "corpse"
 //   tileLabel: descriptive name for statues/corpses (e.g. "goblin corpse")
 //   category: item category string (e.g. "weapon", "potion")
+//   o_id: unique object identity from C engine (unsigned int, never reused
+//         within a game session). Use to track item identity across turns
+//         even when the display name changes (e.g. "a weapon" → "11 arrows").
+//         0 for glyph-only entries before the floor scan backfills.
+//   dknown: true if player has examined item up close (at feet or in inventory).
+//   name: player-perceived item name from the C engine (e.g. "a large box",
+//         "11 arrows", "a scroll labeled ZELGO MER"). Equivalent to what
+//         the farlook command (;) would show. Absent for glyph-only entries
+//         and remembered items.
 //   obscured: true if hidden under another glyph (monster/player on top, or
 //             buried in a pile beneath the top item). Multiple items at the
 //             same position appear as separate entries — the pile top has
